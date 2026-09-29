@@ -8,11 +8,17 @@
  *   nooit een klant aangemaakt of gewijzigd. Het goedkeuringsscherm toont dan
  *   de payload die anders geschreven zou worden.
  *   Ook mét true doet dit skelet geen live OData-POST. Dat blijft een stub
- *   tot Ariadne de Customer-write invult.
+ *   tot Ariadne de AppCustomerCard-write invult.
  *
  * $allowedUsers
  *   weglaten of []  → elke geldige Entra-login heeft toegang
  *   lijst met e-mails → alleen die accounts
+ *
+ * $approvers
+ *   Lijst met e-mailadressen (strings). Alleen die accounts mogen een aanvraag
+ *   goedkeuren of de gegevens wijzigen. Iedereen die mag inloggen mag wel een
+ *   nieuwe aanvraag indienen; goedkeurders ook.
+ *   Weglaten of [] → niemand mag goedkeuren of wijzigen (fail-closed).
  *
  * $mimirApi
  *   gezet: het overzicht controleert goedgekeurde aanvragen read-only via Mímir.
@@ -29,6 +35,12 @@ $canWriteToBC = false;
 // $allowedUsers = [
 //     "user@domain.nl",
 // ];
+
+// Alleen deze adressen keuren goed of wijzigen. Leeg = niemand.
+// $approvers = [
+//     'goedkeurder@kvt.nl',
+// ];
+$approvers = [];
 
 // $mimirApi     = 'mimir_…';
 // $mimirBase    = 'https://sleutels.kvt.nl/mimir/api';

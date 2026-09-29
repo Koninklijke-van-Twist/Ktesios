@@ -10,21 +10,27 @@ require_once __DIR__ . '/mimir_client.php';
  * Schrijven mag alleen als $canWriteToBC === true (boolean). Ook dan doet dit
  * skelet geen live OData-POST. De bedoelde aanroep, voor Ariadne later:
  *
- *   POST {baseUrl}Company('Koninklijke van Twist')/Customer
+ *   POST {baseUrl}Company('Koninklijke van Twist')/AppCustomerCard
  *   Content-Type: application/json
  *   Authorization: service-account uit $auth (basic), niet in git
  *
- *   Velden (placeholder, pagina/naam door Ariadne te bevestigen):
+ *   Velden zoals op AppCustomerCard (zelfde namen als Mercurius/AM-Hub):
  *     Name, Address, Post_Code, City, Country_Region_Code,
- *     Phone_No, E_Mail, VAT_Registration_No, Contact
+ *     Phone_No, E_Mail, VAT_Registration_No, ContactName,
+ *     KVT_Chamber_Of_Commerce_No
  *
- *   KvK-nummer blijft lokaal tot er een BC-veld voor is. Geen PATCH/merge in
- *   dit skelet: een afwijkende bestaande klant wordt nooit stil overschreven.
+ *   Geen PATCH/merge in dit skelet: een afwijkende bestaande klant wordt
+ *   niet stil overschreven.
  *
- * Lezen: Mímir-tabel Customer wanneer $mimirApi gezet is, anders
+ * Lezen: Mímir-tabel AppCustomerCard wanneer $mimirApi gezet is, anders
  * web/fixtures/bc_customers.json. Een Mímir-fout valt niet terug op de fixture,
  * zodat een storing geen "klant bestaat niet" of een vals archief wordt.
  */
+
+function ktesios_bc_customer_entity(): string
+{
+    return 'AppCustomerCard';
+}
 
 function ktesios_can_write_to_bc(): bool
 {
@@ -53,7 +59,8 @@ function ktesios_compare_fields(): array
         ['bc' => 'Phone_No', 'local' => 'phone', 'label' => 'Telefoon', 'kind' => 'phone'],
         ['bc' => 'E_Mail', 'local' => 'email', 'label' => 'E-mail', 'kind' => 'lower'],
         ['bc' => 'VAT_Registration_No', 'local' => 'vat', 'label' => 'BTW-nummer', 'kind' => 'vat'],
-        ['bc' => 'Contact', 'local' => 'contact', 'label' => 'Contactpersoon', 'kind' => 'text'],
+        ['bc' => 'ContactName', 'local' => 'contact', 'label' => 'Contactpersoon', 'kind' => 'text'],
+        ['bc' => 'KVT_Chamber_Of_Commerce_No', 'local' => 'kvk', 'label' => 'KvK-nummer', 'kind' => 'kvk'],
     ];
 }
 
@@ -102,6 +109,8 @@ function ktesios_norm_field(string $value, string $kind): string
             return ktesios_norm_phone($value);
         case 'vat':
             return ktesios_norm_vat($value);
+        case 'kvk':
+            return ktesios_norm_phone($value);
         case 'upper':
             return strtoupper(trim($value));
         case 'lower':
@@ -252,7 +261,8 @@ function ktesios_customer_select(): array
         'Phone_No',
         'E_Mail',
         'VAT_Registration_No',
-        'Contact',
+        'ContactName',
+        'KVT_Chamber_Of_Commerce_No',
     ];
 }
 
@@ -265,7 +275,7 @@ function ktesios_mimir_customer_rows(array $request): array
     $keys = ktesios_lookup_keys($request);
     $select = ktesios_customer_select();
     if ($keys['no'] !== '') {
-        $byNo = ktesios_mimir_query('Customer', ktesios_odata_eq('No', $keys['no']), $select, 60);
+        $byNo = ktesios_mimir_query(ktesios_bc_customer_entity(), ktesios_odata_eq('No', $keys['no']), $select, 60);
         if ($byNo !== []) {
             return $byNo;
         }
@@ -277,7 +287,7 @@ function ktesios_mimir_customer_rows(array $request): array
             $vatFilter = $compact;
         }
         return ktesios_mimir_query(
-            'Customer',
+            ktesios_bc_customer_entity(),
             ktesios_odata_eq('VAT_Registration_No', $vatFilter),
             $select,
             60
@@ -430,7 +440,7 @@ function ktesios_reconcile_requests(array $requests, ?callable $finder = null): 
 }
 
 /**
- * Payload die een latere Customer-insert zou meesturen. Nog geen HTTP.
+ * Payload die een latere AppCustomerCard-insert zou meesturen. Nog geen HTTP.
  *
  * @param array<string, mixed> $request
  * @return array<string, mixed>
@@ -444,11 +454,10 @@ function ktesios_bc_customer_payload(array $request): array
     }
 
     return [
-        'entity' => 'Customer',
+        'entity' => ktesios_bc_customer_entity(),
         'company' => ktesios_company_name(),
         'operation' => 'insert',
         'requestId' => (string) ($request['id'] ?? ''),
-        'kvkNotMapped' => (string) ($customer['kvk'] ?? ''),
         'fields' => [
             'Name' => (string) ($customer['name'] ?? ''),
             'Address' => (string) ($customer['address'] ?? ''),
@@ -458,7 +467,8 @@ function ktesios_bc_customer_payload(array $request): array
             'Phone_No' => (string) ($customer['phone'] ?? ''),
             'E_Mail' => (string) ($customer['email'] ?? ''),
             'VAT_Registration_No' => (string) ($customer['vat'] ?? ''),
-            'Contact' => (string) ($customer['contact'] ?? ''),
+            'ContactName' => (string) ($customer['contact'] ?? ''),
+            'KVT_Chamber_Of_Commerce_No' => (string) ($customer['kvk'] ?? ''),
         ],
     ];
 }
@@ -483,8 +493,8 @@ function ktesios_bc_intended_request(array $payload): array
 
     return [
         'method' => 'POST',
-        'url' => $base . "/Company('" . $company . "')/Customer",
-        'entity' => 'Customer',
+        'url' => $base . "/Company('" . $company . "')/" . ktesios_bc_customer_entity(),
+        'entity' => ktesios_bc_customer_entity(),
         'headers' => [
             'Content-Type: application/json',
             'If-Match: *',
@@ -549,7 +559,7 @@ function ktesios_bc_write_customer(array $payload, string $requestId = ''): arra
         'mode' => 'stub',
         'live' => false,
         'requestId' => $requestId !== '' ? $requestId : (string) ($payload['requestId'] ?? ''),
-        'reason' => 'OData POST naar Customer is in dit skelet niet geactiveerd. Alleen een dry-run log.',
+        'reason' => 'OData POST naar AppCustomerCard is in dit skelet niet geactiveerd. Alleen een dry-run log.',
         'payload' => $payload,
         'intended' => ktesios_bc_intended_request($payload),
     ];
@@ -646,13 +656,113 @@ function ktesios_approve_request(array $request, string $actor): array
     ];
 }
 
+function ktesios_current_email(): string
+{
+    return strtolower(trim((string) ($_SESSION['user']['email'] ?? '')));
+}
+
 function ktesios_actor(): string
 {
-    $email = strtolower(trim((string) ($_SESSION['user']['email'] ?? '')));
+    $email = ktesios_current_email();
     if ($email !== '') {
         return $email;
     }
     return 'lokaal';
+}
+
+/**
+ * Fail-closed: ontbreekt $approvers, is die geen lijst, of staat het adres er
+ * niet als string in, dan mag deze gebruiker niet goedkeuren of wijzigen.
+ */
+function ktesios_can_approve(): bool
+{
+    $email = ktesios_current_email();
+    if ($email === '' || !isset($GLOBALS['approvers']) || !is_array($GLOBALS['approvers']) || $GLOBALS['approvers'] === []) {
+        return false;
+    }
+    foreach ($GLOBALS['approvers'] as $entry) {
+        if (!is_string($entry)) {
+            continue;
+        }
+        if (strtolower(trim($entry)) === $email) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function ktesios_approver_denied_message(): string
+{
+    return 'Alleen een aangewezen goedkeurder mag een aanvraag goedkeuren of wijzigen.';
+}
+
+function ktesios_requester_hint(): string
+{
+    return 'Je kunt een nieuwe aanvraag indienen. Goedkeuren en wijzigen mag alleen een aangewezen goedkeurder.';
+}
+
+/**
+ * POST op de detailpagina. Goedkeuren en wijzigen eisen een goedkeurder én een
+ * geldig CSRF-token. De controle gebeurt hier, niet alleen in de HTML.
+ *
+ * @param list<array<string, mixed>> $requests
+ * @param array<string, mixed> $request
+ * @param array<string, mixed> $post
+ * @return array{saved: bool, rotate: bool, error: string, requests: list<array<string, mixed>>}
+ */
+function ktesios_apply_request_action(array $requests, array $request, array $post, bool $csrfOk): array
+{
+    $none = [
+        'saved' => false,
+        'rotate' => false,
+        'error' => '',
+        'requests' => $requests,
+    ];
+    $actie = (string) ($post['actie'] ?? '');
+    if ($actie !== 'goedkeuren' && $actie !== 'wijzigen') {
+        $none['error'] = 'Onbekende actie.';
+        return $none;
+    }
+    if (!ktesios_can_approve()) {
+        $none['error'] = ktesios_approver_denied_message();
+        return $none;
+    }
+    if (!$csrfOk) {
+        $none['error'] = 'Deze actie hoort niet bij je sessie. Laad de pagina opnieuw.';
+        return $none;
+    }
+    if ($actie === 'goedkeuren') {
+        if ((string) ($post['bevestig'] ?? '') !== 'ja') {
+            $none['error'] = 'Bevestig de goedkeuring in het venster.';
+            $none['rotate'] = true;
+            return $none;
+        }
+        $decision = ktesios_approve_request($request, ktesios_actor());
+        if ($decision['ok'] !== true) {
+            $none['error'] = $decision['error'] !== '' ? $decision['error'] : 'Goedkeuren is niet gelukt.';
+            $none['rotate'] = true;
+            return $none;
+        }
+        return [
+            'saved' => true,
+            'rotate' => true,
+            'error' => '',
+            'requests' => ktesios_replace_request($requests, $decision['request']),
+        ];
+    }
+
+    $edited = ktesios_edit_open_request($request, $post);
+    if ($edited['ok'] !== true) {
+        $none['error'] = $edited['error'] !== '' ? $edited['error'] : 'Wijzigen is niet gelukt.';
+        $none['rotate'] = true;
+        return $none;
+    }
+    return [
+        'saved' => true,
+        'rotate' => true,
+        'error' => '',
+        'requests' => ktesios_replace_request($requests, $edited['request']),
+    ];
 }
 
 /**

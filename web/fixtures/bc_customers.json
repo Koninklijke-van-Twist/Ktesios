@@ -9,7 +9,8 @@
     "Phone_No": "030-1234567",
     "E_Mail": "info@degroot-installaties.example",
     "VAT_Registration_No": "NL123456789B01",
-    "Contact": "A. de Groot"
+    "ContactName": "A. de Groot",
+    "KVT_Chamber_Of_Commerce_No": "30123456"
   },
   {
     "No": "K00077",
@@ -21,6 +22,7 @@
     "Phone_No": "010-7654321",
     "E_Mail": "oud@vandijk.example",
     "VAT_Registration_No": "NL999888777B01",
-    "Contact": "B. van Dijk"
+    "ContactName": "B. van Dijk",
+    "KVT_Chamber_Of_Commerce_No": "24445556"
   }
 ]

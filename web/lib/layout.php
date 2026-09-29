@@ -46,6 +46,7 @@ function ktesios_render_topbar(): void
   <a class="brand" href="index.php">Ktesios</a>
   <nav>
     <a href="index.php">Aanvragen</a>
+    <a href="new.php">Nieuw</a>
     <a href="archive.php">Archief</a>
   </nav>
 </header>
@@ -67,7 +68,7 @@ function ktesios_render_setup_page(): void
     ktesios_page_open('Ktesios instellen');
     echo '<h1>Auth ontbreekt</h1>';
     echo '<p>Kopieer <code>web/auth_TEMPLATE.php</code> naar <code>web/auth.php</code>. Dat bestand staat in <code>.gitignore</code> en hoort niet in git.</p>';
-    echo '<p>Laat <code>$canWriteToBC = false</code> staan tot Ariadne de Customer-write heeft ingevuld. Zonder <code>$mimirApi</code> gebruikt het overzicht de sample-fixtures.</p>';
+    echo '<p>Laat <code>$canWriteToBC = false</code> staan tot Ariadne de AppCustomerCard-write heeft ingevuld. Zonder <code>$mimirApi</code> gebruikt het overzicht de sample-fixtures.</p>';
     ktesios_page_close();
 }
 
@@ -189,6 +190,52 @@ function ktesios_render_customer_fields(array $request): void
     $note = trim((string) ($request['note'] ?? ''));
     echo '<div><dt>Opmerking</dt><dd>' . h($note !== '' ? $note : '—') . '</dd></div>';
     echo '</dl>';
+}
+
+/**
+ * @return array<string, string>
+ */
+function ktesios_customer_form_labels(): array
+{
+    return [
+        'name' => 'Bedrijfsnaam',
+        'contact' => 'Contactpersoon',
+        'address' => 'Adres',
+        'postCode' => 'Postcode',
+        'city' => 'Plaats',
+        'country' => 'Land',
+        'phone' => 'Telefoon',
+        'email' => 'E-mail',
+        'vat' => 'BTW-nummer',
+        'kvk' => 'KvK-nummer',
+    ];
+}
+
+/**
+ * @param array<string, mixed> $values
+ */
+function ktesios_render_request_form(array $values, string $actionUrl, string $actie, string $submitLabel): void
+{
+    $customer = isset($values['customer']) && is_array($values['customer']) ? $values['customer'] : [];
+    echo '<form method="post" action="' . h($actionUrl) . '">';
+    echo '<input type="hidden" name="csrf" value="' . h(ktesios_csrf_token()) . '">';
+    echo '<input type="hidden" name="actie" value="' . h($actie) . '">';
+    echo '<div class="form-grid">';
+    foreach (ktesios_customer_form_labels() as $key => $label) {
+        $class = ($key === 'name' || $key === 'address') ? ' class="wide"' : '';
+        echo '<label' . $class . '>' . h($label);
+        echo '<input name="customer[' . h($key) . ']" value="' . h((string) ($customer[$key] ?? '')) . '" maxlength="200"';
+        if ($key === 'name') {
+            echo ' required';
+        }
+        echo '></label>';
+    }
+    echo '<label class="wide">Opmerking<textarea name="note" maxlength="1000" rows="3">';
+    echo h((string) ($values['note'] ?? ''));
+    echo '</textarea></label>';
+    echo '</div>';
+    echo '<div class="actions"><button class="btn btn-primary" type="submit">' . h($submitLabel) . '</button></div>';
+    echo '</form>';
 }
 
 function ktesios_confirm_copy(): string

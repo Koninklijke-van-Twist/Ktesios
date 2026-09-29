@@ -36,8 +36,10 @@ function reset_state(): void
         $GLOBALS['auth'],
         $GLOBALS['ktesios_bc_write_invocations'],
         $GLOBALS['ktesios_requests_path'],
+        $GLOBALS['ktesios_requests_seed_path'],
         $GLOBALS['ktesios_bc_write_log_path'],
-        $GLOBALS['ktesios_bc_customers_path']
+        $GLOBALS['ktesios_bc_customers_path'],
+        $GLOBALS['approvers']
     );
     ktesios_mimir_set_transport(null);
 }
@@ -92,6 +94,7 @@ check(ktesios_can_write_to_bc() === true, 'only boolean true opens the write pat
 
 $template = (string) file_get_contents(__DIR__ . '/../web/auth_TEMPLATE.php');
 check(preg_match('/\$canWriteToBC\s*=\s*false\s*;/', $template) === 1, 'template defaults the flag to false');
+check(preg_match('/\$approvers\s*=\s*\[\s*\]\s*;/', $template) === 1, 'template fail-closes approvers to an empty list');
 check(strpos($template, 'mimir_…') !== false || strpos($template, 'mimir_...') !== false, 'template has no live Mímir key');
 check(strpos($template, "'pass' => 'PASSWORD'") !== false, 'BC password in the template is only the placeholder');
 check(strpos($template, 'web/auth.php') !== false, 'template tells you to copy it to auth.php');
@@ -119,7 +122,9 @@ check(strpos($workflow, 'TLS uit:') !== false, 'workflow notes that TLS-off matc
 $bcSource = (string) file_get_contents(__DIR__ . '/../web/lib/bc_customer.php');
 check(strpos($bcSource, 'curl_exec') === false, 'write module does not call curl_exec');
 check(strpos($bcSource, 'curl_init') === false, 'write module does not open a curl handle');
-check(strpos($bcSource, "entity' => 'Customer'") !== false || strpos($bcSource, "'entity' => 'Customer'") !== false, 'intended entity is Customer');
+check(ktesios_bc_customer_entity() === 'AppCustomerCard', 'BC entity is AppCustomerCard');
+check(strpos($bcSource, "return 'AppCustomerCard';") !== false, 'source names AppCustomerCard');
+check(strpos($bcSource, "'entity' => 'Customer'") === false && strpos($bcSource, '/Customer') === false, 'source does not target the Customer entity');
 
 $login = (string) file_get_contents(__DIR__ . '/../web/logincheck.php');
 check(strpos($login, "/../login/lib.php") !== false, 'logincheck uses the shared Login app');
@@ -147,11 +152,12 @@ check(($dry['request']['status'] ?? '') === 'approved', 'dry-run approval stays 
 check(($dry['request']['status'] ?? '') !== 'archived', 'dry-run approval does not archive');
 check(($dry['request']['bcSync'] ?? '') === 'dry-run', 'dry-run marks bcSync');
 $payload = $dry['result']['payload'] ?? [];
-check(is_array($payload) && (($payload['entity'] ?? '') === 'Customer'), 'dry-run payload names Customer');
+check(is_array($payload) && (($payload['entity'] ?? '') === 'AppCustomerCard'), 'dry-run payload names AppCustomerCard');
 check((($payload['fields']['Name'] ?? '') === 'Smit & Zonen B.V.'), 'dry-run payload keeps the company name');
 check((($payload['fields']['VAT_Registration_No'] ?? '') === 'NL111222333B01'), 'dry-run payload keeps the VAT number');
-check((($payload['kvkNotMapped'] ?? '') === '30222111'), 'KvK stays outside the BC field list');
-check(!isset($payload['fields']['kvk']) && !isset($payload['fields']['Kvk']), 'KvK is not sent as a BC field');
+check((($payload['fields']['ContactName'] ?? '') === 'C. Smit'), 'contact uses ContactName');
+check((($payload['fields']['KVT_Chamber_Of_Commerce_No'] ?? '') === '30222111'), 'KvK uses KVT_Chamber_Of_Commerce_No');
+check(!isset($payload['fields']['Contact']) && !isset($payload['kvkNotMapped']), 'payload does not use the Customer Contact field');
 check(is_file($GLOBALS['ktesios_bc_write_log_path']) === false, 'dry-run approval does not write the BC log');
 check((int) ($GLOBALS['ktesios_bc_write_invocations'] ?? 0) === 0, 'dry-run approval does not call the stub writer');
 
@@ -185,7 +191,7 @@ check(strpos($log, 'curl_') === false, 'log is not an HTTP transcript');
 
 $intended = ktesios_bc_intended_request($stub['result']['payload']);
 check(($intended['method'] ?? '') === 'POST', 'intended call is POST');
-check(strpos((string) ($intended['url'] ?? ''), "/Company('Koninklijke van Twist')/Customer") !== false, 'intended URL targets Customer');
+check(strpos((string) ($intended['url'] ?? ''), "/Company('Koninklijke van Twist')/AppCustomerCard") !== false, 'intended URL targets AppCustomerCard');
 check(strpos((string) ($intended['todo'] ?? ''), 'Ariadne') !== false, 'intended call is marked for Ariadne');
 
 reset_state();
@@ -268,7 +274,7 @@ ktesios_mimir_set_transport(static function (string $url, array $options) use (&
     if (!is_array($body)) {
         $body = [];
     }
-    if (($body['table'] ?? '') !== 'Customer') {
+    if (($body['table'] ?? '') !== 'AppCustomerCard') {
         return ['code' => 500, 'raw' => '{"error":"unexpected table"}'];
     }
     if (($body['filter'] ?? '') !== "VAT_Registration_No eq 'NL123456789B01'") {
@@ -284,7 +290,8 @@ ktesios_mimir_set_transport(static function (string $url, array $options) use (&
         'Phone_No' => '030-1234567',
         'E_Mail' => 'info@degroot-installaties.example',
         'VAT_Registration_No' => 'NL123456789B01',
-        'Contact' => 'A. de Groot',
+        'ContactName' => 'A. de Groot',
+        'KVT_Chamber_Of_Commerce_No' => '30222111',
     ];
     return ['code' => 200, 'raw' => (string) json_encode(['value' => [$row]])];
 });
@@ -302,7 +309,7 @@ $live = ktesios_bc_find_customer($liveMatch);
 check(($live['source'] ?? '') === 'mimir', 'configured Mímir is the read source');
 check(($live['found'] ?? false) === true, 'Mímir row is found');
 check(strpos((string) ($optionsProbe ?? ''), 'fixtures') === false, 'finder result is not the fixture path');
-check($mimirCalls === 1, 'VAT lookup is a single Customer query');
+check($mimirCalls === 1, 'VAT lookup is a single AppCustomerCard query');
 
 $probe = null;
 ktesios_mimir_set_transport(static function (string $url, array $options) use (&$probe): array {
@@ -360,18 +367,132 @@ ktesios_with_requests_lock(static function () use (&$lockHeld): void {
     }
 });
 check($lockHeld === true, 'requests lock stays exclusive across the callback');
+
+$freshDir = $tmp . '/fresh-data';
+$GLOBALS['ktesios_requests_path'] = $freshDir . '/requests.json';
+$GLOBALS['ktesios_requests_seed_path'] = __DIR__ . '/../web/fixtures/requests_seed.json';
+$seededCount = 0;
+ktesios_with_requests_lock(static function () use (&$seededCount): void {
+    $seededCount = count(ktesios_load_requests());
+});
+check(is_dir($freshDir), 'missing data directory is created before the lock');
+check(is_writable($freshDir), 'created data directory is writable');
+check(is_file($freshDir . '/requests.json'), 'missing store is seeded from fixtures before the lock');
+check($seededCount >= 1, 'locked load sees the seeded requests');
+check(strpos((string) file_get_contents($freshDir . '/requests.json'), 'KA-2026-010') !== false, 'seed copy keeps the fixture ids');
+
+$repairDir = $tmp . '/repair-data';
+if (!mkdir($repairDir, 0555, true) && !is_dir($repairDir)) {
+    fwrite(STDERR, "cannot create repair-data\n");
+    exit(1);
+}
+$GLOBALS['ktesios_requests_path'] = $repairDir . '/requests.json';
+$repaired = false;
+try {
+    ktesios_with_requests_lock(static function () use (&$repaired): void {
+        $repaired = is_file(ktesios_requests_path());
+    });
+} catch (RuntimeException $error) {
+    fwrite(STDERR, 'repair lock error: ' . $error->getMessage() . "\n");
+}
+check($repaired === true, 'owned data directory is made writable before the lock');
+check(is_file($repairDir . '/requests.json'), 'seed runs after the directory is made writable');
+@chmod($repairDir, 0775);
+
+$keptDir = $tmp . '/kept-data';
+if (!mkdir($keptDir, 0775, true) && !is_dir($keptDir)) {
+    fwrite(STDERR, "cannot create kept-data\n");
+    exit(1);
+}
+$keptPath = $keptDir . '/requests.json';
+file_put_contents($keptPath, "[{\"id\":\"KA-2026-099\"}]\n");
+$GLOBALS['ktesios_requests_path'] = $keptPath;
+ktesios_with_requests_lock(static function (): void {
+});
+check(strpos((string) file_get_contents($keptPath), 'KA-2026-099') !== false, 'existing store is not reseeded');
+$keptRaw = (string) file_get_contents($keptPath);
+ktesios_create_store_file($keptPath, "[{\"id\":\"KA-2026-010\"}]\n");
+check(file_get_contents($keptPath) === $keptRaw, 'exclusive seed create does not replace an existing store');
+ktesios_create_store_exclusive($keptPath, "[{\"id\":\"KA-2026-010\"}]\n");
+check(file_get_contents($keptPath) === $keptRaw, 'exclusive fopen does not replace an existing store');
+$exclusiveDir = $tmp . '/exclusive-only';
+if (!mkdir($exclusiveDir, 0775, true) && !is_dir($exclusiveDir)) {
+    fwrite(STDERR, "cannot create exclusive-only\n");
+    exit(1);
+}
+$exclusivePath = $exclusiveDir . '/requests.json';
+ktesios_create_store_exclusive($exclusivePath, "[{\"id\":\"KA-2026-042\"}]\n");
+ktesios_create_store_exclusive($exclusivePath, "[{\"id\":\"KA-2026-099\"}]\n");
+check(strpos((string) file_get_contents($exclusivePath), 'KA-2026-042') !== false, 'exclusive fopen creates once and leaves that file alone');
+$seedFn = strstr((string) file_get_contents(__DIR__ . '/../web/lib/requests_store.php'), 'function ktesios_create_store_file');
+$seedFn = is_string($seedFn) ? substr($seedFn, 0, (int) strpos($seedFn, "\nfunction ")) : '';
+check($seedFn !== '' && strpos($seedFn, 'rename(') === false, 'seed create does not rename over the store');
+check(strpos($seedFn, 'link(') !== false, 'seed create publishes with link when the file is still absent');
+
+$blockedDir = $tmp . '/lock-blocked';
+if (!mkdir($blockedDir, 0775, true) && !is_dir($blockedDir)) {
+    fwrite(STDERR, "cannot create lock-blocked\n");
+    exit(1);
+}
+if (!mkdir($blockedDir . '/requests.json.lock', 0775, true) && !is_dir($blockedDir . '/requests.json.lock')) {
+    fwrite(STDERR, "cannot create lock path blocker\n");
+    exit(1);
+}
+$GLOBALS['ktesios_requests_path'] = $blockedDir . '/requests.json';
+$lockError = '';
+try {
+    ktesios_with_requests_lock(static function (): void {
+    });
+} catch (RuntimeException $error) {
+    $lockError = $error->getMessage();
+}
+check($lockError !== '', 'unopenable lock file is an error');
+check(strpos($lockError, $blockedDir . '/requests.json.lock') !== false, 'lock error names the path that was tried');
+check(strpos($lockError, 'schrijfbaar') !== false, 'lock error tells you to make the directory writable');
+check(is_file($blockedDir . '/requests.json'), 'store is seeded even when the lock cannot be opened');
+
+$parentFile = $tmp . '/not-a-directory';
+file_put_contents($parentFile, 'x');
+$GLOBALS['ktesios_requests_path'] = $parentFile . '/child/requests.json';
+$dirError = '';
+try {
+    ktesios_with_requests_lock(static function (): void {
+    });
+} catch (RuntimeException $error) {
+    $dirError = $error->getMessage();
+}
+check(strpos($dirError, $parentFile . '/child') !== false, 'missing data directory error names the path');
+check(strpos($dirError, 'schrijfbaar') !== false, 'missing data directory error mentions write access');
+unset($GLOBALS['ktesios_requests_seed_path']);
+
 check(strpos((string) file_get_contents(__DIR__ . '/../web/index.php'), 'ktesios_with_requests_lock') !== false, 'worklist holds the lock around reconcile');
 check(strpos((string) file_get_contents(__DIR__ . '/../web/request.php'), 'ktesios_with_requests_lock') !== false, 'detail holds the lock around reconcile and approve');
 
 $index = (string) file_get_contents(__DIR__ . '/../web/index.php');
 check(strpos($index, 'ktesios_reconcile_requests') !== false, 'worklist reconciles on load');
+check(strpos($index, 'getMessage()') !== false, 'worklist shows the storage error text');
 $requestPage = (string) file_get_contents(__DIR__ . '/../web/request.php');
 check(strpos($requestPage, 'approve-modal') !== false, 'detail page has a confirmation modal');
 check(strpos($requestPage, 'stap=bevestigen') !== false, 'detail page has a no-js confirmation step');
 check(strpos($requestPage, 'bevestig') !== false, 'approval requires the confirmation field');
 $csrfPos = strpos($requestPage, 'ktesios_csrf_valid');
-$approvePos = strpos($requestPage, 'ktesios_approve_request');
-check($csrfPos !== false && $approvePos !== false && $csrfPos < $approvePos, 'CSRF is checked before approve');
+$applyPos = strpos($requestPage, 'ktesios_apply_request_action');
+check($csrfPos !== false && $applyPos !== false && $csrfPos < $applyPos, 'CSRF is checked before approve or edit');
+check(strpos($requestPage, 'ktesios_can_approve') !== false, 'detail hides approve and edit unless the user may change requests');
+check(strpos($requestPage, 'ktesios_requester_hint') !== false, 'non-approvers see why approve and edit are hidden');
+$actionFn = strstr($bcSource, 'function ktesios_apply_request_action');
+check(is_string($actionFn), 'approve and edit share one server-side handler');
+$permPos = is_string($actionFn) ? strpos($actionFn, 'ktesios_can_approve') : false;
+$tokenPos = is_string($actionFn) ? strpos($actionFn, '!$csrfOk') : false;
+$approveCall = is_string($actionFn) ? strpos($actionFn, 'ktesios_approve_request') : false;
+$editCall = is_string($actionFn) ? strpos($actionFn, 'ktesios_edit_open_request') : false;
+check($permPos !== false && $tokenPos !== false && $approveCall !== false && $permPos < $tokenPos && $tokenPos < $approveCall, 'approver and CSRF checks run before approve');
+check($editCall !== false && $tokenPos !== false && $tokenPos < $editCall, 'approver and CSRF checks run before edit');
+$newPage = (string) file_get_contents(__DIR__ . '/../web/new.php');
+$newCsrf = strpos($newPage, 'ktesios_csrf_valid');
+$newCreate = strpos($newPage, 'ktesios_create_open_request');
+check($newCsrf !== false && $newCreate !== false && $newCsrf < $newCreate, 'new request checks CSRF before it is stored');
+check(strpos($newPage, 'ktesios_can_approve') === false, 'submitting a request does not require an approver');
 $layout = (string) file_get_contents(__DIR__ . '/../web/lib/layout.php');
 check(strpos($layout, 'name="csrf"') !== false, 'confirm form posts the CSRF token');
 $storeSource = (string) file_get_contents(__DIR__ . '/../web/lib/requests_store.php');
@@ -381,6 +502,7 @@ check(strpos($storeSource, 'tempnam(') !== false, 'save uses a unique tempnam pe
 $phpFiles = [
     'web/index.php',
     'web/request.php',
+    'web/new.php',
     'web/archive.php',
     'web/logincheck.php',
     'web/auth_TEMPLATE.php',
@@ -430,6 +552,84 @@ check(is_string($scopeOut) && strpos($scopeOut, 'mimir-yes') !== false, 'tempora
 if (!is_string($scopeOut) || strpos($scopeOut, 'write-yes') === false) {
     fwrite(STDERR, "scope runner output:\n" . (string) $scopeOut . "\n");
 }
+
+unset($GLOBALS['approvers'], $_SESSION['user']);
+check(ktesios_can_approve() === false, 'missing approvers list blocks approve and edit');
+$GLOBALS['approvers'] = [];
+$_SESSION['user'] = ['email' => 'goedkeurder@kvt.nl'];
+check(ktesios_can_approve() === false, 'empty approvers list blocks approve and edit');
+$GLOBALS['approvers'] = 'goedkeurder@kvt.nl';
+check(ktesios_can_approve() === false, 'a string approvers value is not a list');
+$GLOBALS['approvers'] = ['goedkeurder@kvt.nl' => true];
+check(ktesios_can_approve() === false, 'approver map keys are not treated as emails');
+$GLOBALS['approvers'] = [15, '  Goedkeurder@kvt.nl  '];
+check(ktesios_can_approve() === true, 'approver match ignores case, space and non-strings');
+unset($_SESSION['user']);
+check(ktesios_can_approve() === false, 'no email cannot approve even when the list is filled');
+
+$openForGate = sample_request('KA-2026-010', 'open');
+$deniedEdit = ktesios_apply_request_action(
+    [$openForGate],
+    $openForGate,
+    ['actie' => 'wijzigen', 'customer' => ['name' => 'Gewijzigd BV']],
+    true
+);
+check($deniedEdit['saved'] === false, 'non-approver edit is refused on the server');
+check(($deniedEdit['requests'][0]['customer']['name'] ?? '') === 'Smit & Zonen B.V.', 'refused edit does not change the name');
+check(strpos($deniedEdit['error'], 'goedkeurder') !== false, 'refused edit explains who may change a request');
+$deniedApprove = ktesios_apply_request_action(
+    [$openForGate],
+    $openForGate,
+    ['actie' => 'goedkeuren', 'bevestig' => 'ja'],
+    true
+);
+check($deniedApprove['saved'] === false && ($deniedApprove['requests'][0]['status'] ?? '') === 'open', 'non-approver approve is refused on the server');
+
+$_SESSION['user'] = ['email' => 'goedkeurder@kvt.nl'];
+$badToken = ktesios_apply_request_action(
+    [$openForGate],
+    $openForGate,
+    ['actie' => 'goedkeuren', 'bevestig' => 'ja'],
+    false
+);
+check($badToken['saved'] === false, 'approver still needs a valid CSRF token');
+$edited = ktesios_apply_request_action(
+    [$openForGate],
+    $openForGate,
+    ['actie' => 'wijzigen', 'customer' => ['name' => 'Andere BV'], 'note' => 'na controle'],
+    true
+);
+check($edited['saved'] === true, 'approver can edit an open request');
+check(($edited['requests'][0]['customer']['name'] ?? '') === 'Andere BV', 'edit stores the new company name');
+check(($edited['requests'][0]['customer']['city'] ?? '') === 'Utrecht', 'omitted fields stay as they were');
+check(($edited['requests'][0]['status'] ?? '') === 'open', 'edit does not approve the request');
+$approvedByRole = ktesios_apply_request_action(
+    [$openForGate],
+    $openForGate,
+    ['actie' => 'goedkeuren', 'bevestig' => 'ja'],
+    true
+);
+check($approvedByRole['saved'] === true && ($approvedByRole['requests'][0]['status'] ?? '') === 'approved', 'approver can approve');
+check(($approvedByRole['requests'][0]['approvedBy'] ?? '') === 'goedkeurder@kvt.nl', 'approval stores the approver email');
+$closed = sample_request('KA-2026-010', 'approved');
+$closedEdit = ktesios_apply_request_action([$closed], $closed, ['actie' => 'wijzigen', 'customer' => ['name' => 'X']], true);
+check($closedEdit['saved'] === false, 'approver cannot edit a request that is not open');
+
+$year = gmdate('Y');
+$submitted = ktesios_create_open_request(
+    [sample_request('KA-' . $year . '-010', 'open')],
+    ['customer' => ['name' => 'Nieuw BV', 'city' => 'Delft'], 'note' => 'offerte'],
+    'indiener@kvt.nl'
+);
+check($submitted['ok'] === true, 'a non-approver path can still build a new request');
+check(($submitted['request']['id'] ?? '') === 'KA-' . $year . '-011', 'new request ids increment in the current year');
+check(($submitted['request']['status'] ?? '') === 'open', 'a submitted request starts open');
+check(($submitted['request']['createdBy'] ?? '') === 'indiener@kvt.nl', 'submitter is stored');
+$asApprover = ktesios_create_open_request([], ['customer' => ['name' => 'Ook BV']], 'goedkeurder@kvt.nl');
+check($asApprover['ok'] === true && ($asApprover['request']['createdBy'] ?? '') === 'goedkeurder@kvt.nl', 'an approver can also submit a request');
+$nameless = ktesios_create_open_request([], ['customer' => ['city' => 'Delft']], 'indiener@kvt.nl');
+check($nameless['ok'] === false, 'a request without a company name is refused');
+unset($GLOBALS['approvers'], $_SESSION['user']);
 
 ini_set('session.use_cookies', '0');
 ini_set('session.use_only_cookies', '1');
