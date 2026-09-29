@@ -73,6 +73,33 @@ function ktesios_seed_requests(): void
 }
 
 /**
+ * Exclusive lock voor de reeks laden → vergelijken → wegschrijven.
+ * flock is niet recursief: niet opnieuw aanroepen vanuit de callback.
+ *
+ * @template T
+ * @param callable(): T $callback
+ * @return T
+ */
+function ktesios_with_requests_lock(callable $callback)
+{
+    $dir = dirname(ktesios_requests_path());
+    ktesios_ensure_dir($dir);
+    $handle = fopen(ktesios_requests_path() . '.lock', 'c');
+    if ($handle === false) {
+        throw new RuntimeException('Aanvragen konden niet worden vergrendeld.');
+    }
+    try {
+        if (!flock($handle, LOCK_EX)) {
+            throw new RuntimeException('Aanvragen konden niet worden vergrendeld.');
+        }
+        return $callback();
+    } finally {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+    }
+}
+
+/**
  * @param list<array<string, mixed>> $requests
  */
 function ktesios_save_requests(array $requests): void

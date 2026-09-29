@@ -14,12 +14,40 @@ if (!ktesios_valid_request_id($id)) {
 }
 
 try {
-    $requests = ktesios_load_requests();
-    $reconciliation = ktesios_reconcile_requests($requests);
-    if ($reconciliation['changed']) {
-        ktesios_save_requests($reconciliation['requests']);
-    }
-    $requests = $reconciliation['requests'];
+    $handled = ktesios_with_requests_lock(static function () use ($id): array {
+        $requests = ktesios_load_requests();
+        $reconciliation = ktesios_reconcile_requests($requests);
+        if ($reconciliation['changed']) {
+            ktesios_save_requests($reconciliation['requests']);
+        }
+        $requests = $reconciliation['requests'];
+        $request = ktesios_find_request($requests, $id);
+        $postError = '';
+        $redirect = '';
+        if ($request !== null && (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST')) {
+            $confirmed = (string) ($_POST['actie'] ?? '') === 'goedkeuren' && (string) ($_POST['bevestig'] ?? '') === 'ja';
+            $postedCsrf = isset($_POST['csrf']) && is_string($_POST['csrf']) ? $_POST['csrf'] : '';
+            if (!$confirmed) {
+                $postError = 'Bevestig de goedkeuring in het venster.';
+            } elseif (!ktesios_csrf_valid($postedCsrf)) {
+                $postError = 'Deze goedkeuring hoort niet bij je sessie. Laad de pagina opnieuw.';
+            } else {
+                ktesios_csrf_rotate();
+                $decision = ktesios_approve_request($request, ktesios_actor());
+                if ($decision['ok'] !== true) {
+                    $postError = $decision['error'] !== '' ? $decision['error'] : 'Goedkeuren is niet gelukt.';
+                } else {
+                    ktesios_save_requests(ktesios_replace_request($requests, $decision['request']));
+                    $redirect = 'request.php?id=' . rawurlencode($id) . '&gemeld=1';
+                }
+            }
+        }
+        return [
+            'request' => $request,
+            'postError' => $postError,
+            'redirect' => $redirect,
+        ];
+    });
 } catch (Throwable $error) {
     http_response_code(500);
     ktesios_page_open('Aanvraag');
@@ -28,38 +56,19 @@ try {
     exit;
 }
 
-$request = ktesios_find_request($requests, $id);
-if ($request === null) {
+if ($handled['redirect'] !== '') {
+    header('Location: ' . $handled['redirect'], true, 303);
+    exit;
+}
+
+$request = $handled['request'];
+$postError = $handled['postError'];
+if (!is_array($request)) {
     http_response_code(404);
     ktesios_page_open('Aanvraag');
     echo '<h1>Aanvraag niet gevonden</h1><p class="hint"><a href="index.php">Terug naar aanvragen</a></p>';
     ktesios_page_close();
     exit;
-}
-
-$postError = '';
-if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
-    $confirmed = (string) ($_POST['actie'] ?? '') === 'goedkeuren' && (string) ($_POST['bevestig'] ?? '') === 'ja';
-    $postedCsrf = isset($_POST['csrf']) && is_string($_POST['csrf']) ? $_POST['csrf'] : '';
-    if (!$confirmed) {
-        $postError = 'Bevestig de goedkeuring in het venster.';
-    } elseif (!ktesios_csrf_valid($postedCsrf)) {
-        $postError = 'Deze goedkeuring hoort niet bij je sessie. Laad de pagina opnieuw.';
-    } else {
-        ktesios_csrf_rotate();
-        $decision = ktesios_approve_request($request, ktesios_actor());
-        if ($decision['ok'] !== true) {
-            $postError = $decision['error'] !== '' ? $decision['error'] : 'Goedkeuren is niet gelukt.';
-        } else {
-            try {
-                ktesios_save_requests(ktesios_replace_request($requests, $decision['request']));
-                header('Location: request.php?id=' . rawurlencode($id) . '&gemeld=1', true, 303);
-                exit;
-            } catch (Throwable $error) {
-                $postError = $error->getMessage();
-            }
-        }
-    }
 }
 
 $step = (string) ($_GET['stap'] ?? '');

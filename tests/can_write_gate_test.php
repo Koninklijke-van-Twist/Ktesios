@@ -110,6 +110,11 @@ check(strpos($workflow, '--exclude-glob data/**') !== false, 'deploy excludes da
 check(strpos($workflow, '--exclude-glob cache/**') !== false, 'deploy excludes cache');
 check(strpos($workflow, 'mirror -R --delete') !== false, 'deploy mirrors web with delete');
 check(strpos($workflow, "php-version: \"8.0\"") !== false, 'CI runs the gate test on PHP 8.0');
+check(strpos($workflow, 'actions/checkout@v4') === false, 'checkout is not a floating major tag');
+check(preg_match_all('/actions\/checkout@[0-9a-f]{40}/', $workflow) === 2, 'both checkout steps are pinned to a full SHA');
+check(preg_match('/shivammathur\/setup-php@[0-9a-f]{40}/', $workflow) === 1, 'setup-php is pinned to a full SHA');
+check(strpos($workflow, 'set ftp:ssl-allow false') !== false, 'deploy stays on plain FTP like the other sleutels apps');
+check(strpos($workflow, 'TLS uit:') !== false, 'workflow notes that TLS-off matches the org FTP servers');
 
 $bcSource = (string) file_get_contents(__DIR__ . '/../web/lib/bc_customer.php');
 check(strpos($bcSource, 'curl_exec') === false, 'write module does not call curl_exec');
@@ -345,6 +350,18 @@ check(count($loaded) === 1 && ($loaded[0]['id'] ?? '') === 'KA-2026-010', 'store
 $replaced = ktesios_replace_request($loaded, sample_request('KA-2026-010', 'approved'));
 check(($replaced[0]['status'] ?? '') === 'approved', 'replace updates the same id');
 check(ktesios_find_request($replaced, 'KA-2026-099') === null, 'missing id is null');
+
+$lockHeld = false;
+ktesios_with_requests_lock(static function () use (&$lockHeld): void {
+    $handle = fopen(ktesios_requests_path() . '.lock', 'c');
+    $lockHeld = $handle !== false && !flock($handle, LOCK_EX | LOCK_NB);
+    if (is_resource($handle)) {
+        fclose($handle);
+    }
+});
+check($lockHeld === true, 'requests lock stays exclusive across the callback');
+check(strpos((string) file_get_contents(__DIR__ . '/../web/index.php'), 'ktesios_with_requests_lock') !== false, 'worklist holds the lock around reconcile');
+check(strpos((string) file_get_contents(__DIR__ . '/../web/request.php'), 'ktesios_with_requests_lock') !== false, 'detail holds the lock around reconcile and approve');
 
 $index = (string) file_get_contents(__DIR__ . '/../web/index.php');
 check(strpos($index, 'ktesios_reconcile_requests') !== false, 'worklist reconciles on load');

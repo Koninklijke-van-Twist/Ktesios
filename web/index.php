@@ -5,11 +5,14 @@ declare(strict_types=1);
 require_once __DIR__ . '/lib/bootstrap.php';
 
 try {
-    $requests = ktesios_load_requests();
-    $reconciliation = ktesios_reconcile_requests($requests);
-    if ($reconciliation['changed']) {
-        ktesios_save_requests($reconciliation['requests']);
-    }
+    $reconciliation = ktesios_with_requests_lock(static function (): array {
+        $requests = ktesios_load_requests();
+        $reconciliation = ktesios_reconcile_requests($requests);
+        if ($reconciliation['changed']) {
+            ktesios_save_requests($reconciliation['requests']);
+        }
+        return $reconciliation;
+    });
 } catch (Throwable $error) {
     http_response_code(500);
     ktesios_page_open('Ktesios');
