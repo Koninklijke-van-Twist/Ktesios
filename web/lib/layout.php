@@ -98,7 +98,7 @@ function ktesios_render_request_table(array $requests, string $emptyText): void
         return;
     }
     echo '<div class="table-wrap"><table class="list">';
-    echo '<thead><tr><th>Nummer</th><th>Bedrijf</th><th>Plaats</th><th>Status</th></tr></thead><tbody>';
+    echo '<thead><tr><th>Nummer</th><th>Bedrijf</th><th>Plaats</th><th>Aangemaakt</th><th>Status</th></tr></thead><tbody>';
     foreach ($requests as $request) {
         if (!is_array($request)) {
             continue;
@@ -110,8 +110,10 @@ function ktesios_render_request_table(array $requests, string $emptyText): void
         $label = function_exists('ktesios_status_label') ? ktesios_status_label($request) : $id;
         echo '<tr>';
         echo '<td><a href="' . h($href) . '">' . h($id) . '</a></td>';
+        $created = ktesios_format_displayed_when((string) ($request['createdAt'] ?? ''));
         echo '<td>' . h((string) ($customer['name'] ?? '')) . '</td>';
         echo '<td>' . h((string) ($customer['city'] ?? '')) . '</td>';
+        echo '<td>' . h($created !== '' ? $created : '—') . '</td>';
         echo '<td><span class="pill pill-' . h($pill) . '">' . h($label) . '</span></td>';
         echo '</tr>';
     }
@@ -263,18 +265,270 @@ function ktesios_render_confirm_form(array $request): void
     echo '</div></form>';
 }
 
-function ktesios_format_activity_time(string $value): string
+function ktesios_reject_copy(): string
+{
+    return 'Je keurt deze aanvraag af. De aanvraag gaat naar het archief en kan daarna niet meer worden goedgekeurd. De reden komt in de activiteit te staan.';
+}
+
+/**
+ * @param array<string, mixed> $request
+ */
+function ktesios_render_reject_form(array $request, string $draftReason = '', string $fieldId = 'reject-reason'): void
+{
+    $id = (string) ($request['id'] ?? '');
+    echo '<form method="post" action="request.php?id=' . h(rawurlencode($id)) . '">';
+    echo '<input type="hidden" name="csrf" value="' . h(ktesios_csrf_token()) . '">';
+    echo '<input type="hidden" name="actie" value="afkeuren">';
+    echo '<input type="hidden" name="bevestig" value="ja">';
+    echo '<label class="reject-reason" for="' . h($fieldId) . '">Reden';
+    echo '<textarea id="' . h($fieldId) . '" name="reden" rows="3" maxlength="1000" required>' . h($draftReason) . '</textarea>';
+    echo '</label>';
+    echo '<p class="hint">Verplicht. Deze tekst komt in de activiteit te staan.</p>';
+    echo '<div class="actions">';
+    echo '<button class="btn btn-danger" type="submit">Ja, afkeuren</button>';
+    echo '<a class="btn" href="request.php?id=' . h(rawurlencode($id)) . '">Annuleren</a>';
+    echo '</div></form>';
+}
+
+/**
+ * Goedkeuren en afkeuren. Niets als de aanvraag gearchiveerd is of niet open.
+ *
+ * @param array<string, mixed> $request
+ */
+function ktesios_render_decision_actions(array $request, string $draftReason = ''): void
+{
+    if (!function_exists('ktesios_may_approve_request') || !ktesios_may_approve_request($request)) {
+        return;
+    }
+    $id = (string) ($request['id'] ?? '');
+    $href = 'request.php?id=' . rawurlencode($id);
+    echo '<div class="actions">';
+    echo '<button class="btn btn-primary" type="button" id="open-approve">Goedkeuren</button>';
+    echo '<button class="btn btn-danger" type="button" id="open-reject">Afkeuren</button>';
+    echo '</div>';
+    echo '<noscript><p class="actions">';
+    echo '<a class="btn btn-primary" href="' . h($href) . '&amp;stap=bevestigen">Goedkeuren (bevestigen)</a>';
+    echo '<a class="btn btn-danger" href="' . h($href) . '&amp;stap=afkeuren">Afkeuren (reden invullen)</a>';
+    echo '</p></noscript>';
+    echo '<div class="modal" id="approve-modal" hidden>';
+    echo '<div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="approve-title">';
+    echo '<h2 id="approve-title">Klantaanvraag goedkeuren?</h2>';
+    echo '<p>' . h(ktesios_confirm_copy()) . '</p>';
+    ktesios_render_confirm_form($request);
+    echo '</div></div>';
+    echo '<div class="modal" id="reject-modal" hidden>';
+    echo '<div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="reject-title">';
+    echo '<h2 id="reject-title">Klantaanvraag afkeuren?</h2>';
+    echo '<p>' . h(ktesios_reject_copy()) . '</p>';
+    ktesios_render_reject_form($request, $draftReason, 'reject-reason-modal');
+    echo '</div></div>';
+    echo <<<'JS'
+<script>
+(function () {
+  var pairs = [
+    { open: 'open-approve', modal: 'approve-modal', focus: '.btn-primary' },
+    { open: 'open-reject', modal: 'reject-modal', focus: 'textarea' }
+  ];
+  function closeModal(modal, opener) {
+    modal.hidden = true;
+    if (opener) {
+      opener.focus();
+    }
+  }
+  pairs.forEach(function (pair) {
+    var openBtn = document.getElementById(pair.open);
+    var modal = document.getElementById(pair.modal);
+    if (!openBtn || !modal) {
+      return;
+    }
+    function openModal() {
+      modal.hidden = false;
+      var field = modal.querySelector(pair.focus);
+      if (field) {
+        field.focus();
+      }
+    }
+    openBtn.addEventListener('click', openModal);
+    modal.addEventListener('click', function (event) {
+      if (event.target === modal) {
+        closeModal(modal, openBtn);
+      }
+    });
+    var links = modal.querySelectorAll('a');
+    for (var i = 0; i < links.length; i++) {
+      links[i].addEventListener('click', function () {
+        modal.hidden = true;
+      });
+    }
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && !modal.hidden) {
+        closeModal(modal, openBtn);
+      }
+    });
+  });
+})();
+</script>
+JS;
+}
+
+/**
+ * @param array<string, mixed> $request
+ */
+function ktesios_render_request_meta(array $request): void
+{
+    $approvedAt = ktesios_format_displayed_when((string) ($request['approvedAt'] ?? ''));
+    $approvedBy = trim((string) ($request['approvedBy'] ?? ''));
+    $approved = $approvedAt;
+    if ($approvedBy !== '') {
+        $approved = trim($approvedAt . ' ' . $approvedBy);
+    }
+    $rows = [
+        'Aangemaakt' => ktesios_format_displayed_when((string) ($request['createdAt'] ?? '')),
+        'Ingediend door' => trim((string) ($request['createdBy'] ?? '')),
+        'Goedgekeurd' => $approved,
+        'Afgerond' => ktesios_format_displayed_when((string) ($request['archivedAt'] ?? '')),
+        'Reden archief' => trim((string) ($request['archiveReason'] ?? '')),
+        'BC-klantnummer' => trim((string) ($request['bcCustomerNo'] ?? '')),
+    ];
+    echo '<dl class="fields meta">';
+    foreach ($rows as $label => $value) {
+        if ($value === '') {
+            continue;
+        }
+        echo '<div><dt>' . h($label) . '</dt><dd>' . h($value) . '</dd></div>';
+    }
+    echo '</dl>';
+}
+
+function ktesios_dutch_month_name(int $month): string
+{
+    $names = [
+        1 => 'januari',
+        2 => 'februari',
+        3 => 'maart',
+        4 => 'april',
+        5 => 'mei',
+        6 => 'juni',
+        7 => 'juli',
+        8 => 'augustus',
+        9 => 'september',
+        10 => 'oktober',
+        11 => 'november',
+        12 => 'december',
+    ];
+    return $names[$month] ?? '';
+}
+
+function ktesios_amsterdam_zone(): DateTimeZone
+{
+    return new DateTimeZone('Europe/Amsterdam');
+}
+
+function ktesios_parse_displayed_moment(string $value): ?DateTimeImmutable
+{
+    try {
+        return new DateTimeImmutable($value);
+    } catch (Exception $error) {
+        return null;
+    }
+}
+
+function ktesios_format_dutch_date(DateTimeImmutable $when): string
+{
+    $month = ktesios_dutch_month_name((int) $when->format('n'));
+    if ($month === '') {
+        return '';
+    }
+    return $when->format('j') . ' ' . $month . ' ' . $when->format('Y');
+}
+
+function ktesios_format_dutch_clock(DateTimeImmutable $when): string
+{
+    return $when->format('H:i');
+}
+
+function ktesios_datetime_has_overflow(): bool
+{
+    $errors = DateTimeImmutable::getLastErrors();
+    if (!is_array($errors)) {
+        return false;
+    }
+    return (int) ($errors['warning_count'] ?? 0) > 0 || (int) ($errors['error_count'] ?? 0) > 0;
+}
+
+function ktesios_format_date(string $value): string
+{
+    $value = trim($value);
+    if (preg_match('/\A\d{4}-\d{2}-\d{2}\z/', $value) === 1) {
+        $when = DateTimeImmutable::createFromFormat('!Y-m-d', $value, ktesios_amsterdam_zone());
+        if ($when === false || ktesios_datetime_has_overflow()) {
+            return '';
+        }
+        return ktesios_format_dutch_date($when);
+    }
+    $when = ktesios_parse_displayed_moment($value);
+    if ($when === null) {
+        return '';
+    }
+    return ktesios_format_dutch_date($when->setTimezone(ktesios_amsterdam_zone()));
+}
+
+function ktesios_format_time(string $value): string
+{
+    $value = trim($value);
+    if (preg_match('/\A(\d{2}):(\d{2})(?::\d{2})?\z/', $value, $match) === 1) {
+        $hour = (int) $match[1];
+        $minute = (int) $match[2];
+        if ($hour > 23 || $minute > 59) {
+            return '';
+        }
+        return sprintf('%02d:%02d', $hour, $minute);
+    }
+    $when = ktesios_parse_displayed_moment($value);
+    if ($when === null) {
+        return '';
+    }
+    return ktesios_format_dutch_clock($when->setTimezone(ktesios_amsterdam_zone()));
+}
+
+function ktesios_format_datetime(string $value): string
+{
+    $when = ktesios_parse_displayed_moment(trim($value));
+    if ($when === null) {
+        return '';
+    }
+    $local = $when->setTimezone(ktesios_amsterdam_zone());
+    $date = ktesios_format_dutch_date($local);
+    if ($date === '') {
+        return '';
+    }
+    return $date . ', ' . ktesios_format_dutch_clock($local);
+}
+
+/**
+ * Datum+tijd, alleen een datum, of alleen een tijd. Ruwe ISO komt niet terug.
+ */
+function ktesios_format_displayed_when(string $value): string
 {
     $value = trim($value);
     if ($value === '') {
         return '';
     }
-    try {
-        $when = new DateTimeImmutable($value);
-    } catch (Exception $error) {
-        return $value;
+    if (preg_match('/\A\d{2}:\d{2}(?::\d{2})?\z/', $value) === 1) {
+        return ktesios_format_time($value);
     }
-    return $when->setTimezone(new DateTimeZone('Europe/Amsterdam'))->format('d-m-Y H:i');
+    if (preg_match('/\A\d{4}-\d{2}-\d{2}\z/', $value) === 1) {
+        return ktesios_format_date($value);
+    }
+    if (preg_match('/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/', $value) === 1) {
+        return ktesios_format_datetime($value);
+    }
+    return $value;
+}
+
+function ktesios_format_activity_time(string $value): string
+{
+    return ktesios_format_displayed_when($value);
 }
 
 function ktesios_activity_initial(string $email): string

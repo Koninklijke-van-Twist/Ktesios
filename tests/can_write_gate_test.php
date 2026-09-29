@@ -178,6 +178,10 @@ $GLOBALS['ktesios_bc_write_log_path'] = $tmp . '/bc-write.log';
 $stub = ktesios_approve_request(sample_request('KA-2026-011', 'open'), 'tester@kvt.example');
 check($stub['ok'] === true && $stub['mode'] === 'stub', 'boolean true uses the stub writer');
 check(($stub['request']['status'] ?? '') === 'archived', 'stub approval archives the request');
+$approveArchived = ktesios_approve_request($stub['request'], 'tester@kvt.example');
+check($approveArchived['ok'] === false, 'an archived request cannot be approved');
+check(strpos($approveArchived['error'], 'gearchiveerd') !== false, 'archived approval says the request is archived');
+check(($approveArchived['request']['status'] ?? '') === 'archived', 'refused approval leaves the archived request archived');
 check(($stub['result']['live'] ?? true) === false, 'stub result is not live');
 check(($stub['result']['mode'] ?? '') === 'stub', 'stub result mode is stub');
 check((int) ($GLOBALS['ktesios_bc_write_invocations'] ?? 0) === 1, 'stub writer ran once');
@@ -487,9 +491,14 @@ $index = (string) file_get_contents(__DIR__ . '/../web/index.php');
 check(strpos($index, 'ktesios_reconcile_requests') !== false, 'worklist reconciles on load');
 check(strpos($index, 'getMessage()') !== false, 'worklist shows the storage error text');
 $requestPage = (string) file_get_contents(__DIR__ . '/../web/request.php');
-check(strpos($requestPage, 'approve-modal') !== false, 'detail page has a confirmation modal');
-check(strpos($requestPage, 'stap=bevestigen') !== false, 'detail page has a no-js confirmation step');
-check(strpos($requestPage, 'bevestig') !== false, 'approval requires the confirmation field');
+$decisionUi = (string) file_get_contents(__DIR__ . '/../web/lib/layout.php');
+check(strpos($decisionUi, 'approve-modal') !== false, 'detail page has a confirmation modal');
+check(strpos($decisionUi, 'stap=bevestigen') !== false, 'detail page has a no-js confirmation step');
+check(strpos($decisionUi, 'name="bevestig" value="ja"') !== false, 'approval requires the confirmation field');
+check(strpos($requestPage, 'ktesios_render_decision_actions') !== false, 'detail page renders approve and reject');
+check(strpos($requestPage, 'ktesios_may_approve_request') !== false, 'detail hides approve when the request is archived or not open');
+check(strpos($decisionUi, 'id="open-reject"') !== false, 'detail page offers reject next to approve');
+check(strpos($decisionUi, 'name="reden"') !== false && strpos($decisionUi, 'required') !== false, 'reject requires a reason in the form');
 $csrfPos = strpos($requestPage, 'ktesios_csrf_valid');
 $applyPos = strpos($requestPage, 'ktesios_apply_request_action');
 check($csrfPos !== false && $applyPos !== false && $csrfPos < $applyPos, 'CSRF is checked before approve or edit');
@@ -500,8 +509,10 @@ check(is_string($actionFn), 'approve and edit share one server-side handler');
 $permPos = is_string($actionFn) ? strpos($actionFn, 'ktesios_can_approve') : false;
 $tokenPos = is_string($actionFn) ? strpos($actionFn, '!$csrfOk') : false;
 $approveCall = is_string($actionFn) ? strpos($actionFn, 'ktesios_approve_request') : false;
+$rejectCall = is_string($actionFn) ? strpos($actionFn, 'ktesios_reject_request') : false;
 $editCall = is_string($actionFn) ? strpos($actionFn, 'ktesios_edit_open_request') : false;
 check($permPos !== false && $tokenPos !== false && $approveCall !== false && $permPos < $tokenPos && $tokenPos < $approveCall, 'approver and CSRF checks run before approve');
+check($rejectCall !== false && $tokenPos !== false && $tokenPos < $rejectCall, 'approver and CSRF checks run before reject');
 check($editCall !== false && $tokenPos !== false && $tokenPos < $editCall, 'approver and CSRF checks run before edit');
 $newPage = (string) file_get_contents(__DIR__ . '/../web/new.php');
 $newCsrf = strpos($newPage, 'ktesios_csrf_valid');
@@ -601,6 +612,13 @@ $deniedApprove = ktesios_apply_request_action(
     true
 );
 check($deniedApprove['saved'] === false && ($deniedApprove['requests'][0]['status'] ?? '') === 'open', 'non-approver approve is refused on the server');
+$deniedReject = ktesios_apply_request_action(
+    [$openForGate],
+    $openForGate,
+    ['actie' => 'afkeuren', 'bevestig' => 'ja', 'reden' => 'Mag niet'],
+    true
+);
+check($deniedReject['saved'] === false && ($deniedReject['requests'][0]['status'] ?? '') === 'open', 'non-approver reject is refused on the server');
 
 $_SESSION['user'] = ['email' => 'goedkeurder@kvt.nl'];
 $badToken = ktesios_apply_request_action(

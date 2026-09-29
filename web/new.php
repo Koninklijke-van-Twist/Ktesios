@@ -44,7 +44,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 ktesios_page_open('Nieuwe aanvraag — Ktesios');
 echo '<p class="hint"><a href="index.php">← Aanvragen</a></p>';
 echo '<h1>Nieuwe klantaanvraag</h1>';
-echo '<p class="lead">Iedereen met toegang kan een aanvraag indienen. Goedkeuren en wijzigen doet een aangewezen goedkeurder.</p>';
+echo '<p class="lead">Iedereen met toegang kan een aanvraag indienen. Goedkeuren, afkeuren en wijzigen doet een aangewezen goedkeurder.</p>';
 if ($error !== '') {
     echo '<p class="field-error">' . h($error) . '</p>';
 }
