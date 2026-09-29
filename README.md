@@ -16,11 +16,9 @@ Open <http://localhost:8765/>.
 
 `web/auth.php` staat in `.gitignore`. Laat `$canWriteToBC = false` staan.
 Zonder `$mimirApi` vergelijkt het overzicht met `web/fixtures/bc_customers.json`.
-De eerste keer maakt de app `web/data/` aan als die map ontbreekt en kopieert `web/fixtures/requests_seed.json` naar `web/data/requests.json` (ook gitignored).
+De eerste keer maakt de app `web/data/` aan als die map ontbreekt en kopieert `web/fixtures/requests_seed.json` naar `web/data/requests.json` (ook gitignored). Die seed is een lege lijst `[]`, dus een nieuwe store heeft geen voorbeeldklanten. Een bestaande `requests.json` wordt niet overschreven. Deploy laat `data/` staan, dus een al gevulde productielijst blijft staan tot die op de server zelf wordt geleegd.
 
 Lukt de vergrendeling daarna niet, dan toont het overzicht het geprobeerde lockpad (`web/data/requests.json.lock`) en dat die map schrijfbaar moet zijn voor de webserver. Een netwerkschijf of synchronisatiemap weigert `flock` soms terwijl schrijven wel lukt; zet de checkout dan op een lokale schijf. Zonder slot gaat de pagina niet alleen-lezen verder: de controle bij laden schrijft statussen weg, en twee verzoeken zouden `requests.json` anders overschrijven.
-
-Wis `web/data/requests.json` om de voorbeeldlijst terug te zetten.
 
 ## Drie gedragingen
 
@@ -44,7 +42,7 @@ Voor aanvragen die **goedgekeurd** zijn en **nog niet afgerond**:
 
 Lezen gaat via Mímir (`AppCustomerCard`) als `$mimirApi` gezet is. Zonder sleutel gelden de sample-fixtures. Een Mímir-fout valt niet terug op die fixtures en archiveert niet.
 
-Het overzicht in de seed laat dit meteen zien: KA-2026-020 komt overeen, KA-2026-030 wijkt af, KA-2026-040 wacht, KA-2026-010 is nog open.
+Die gevallen staan in `tests/fixtures/requests_seed.json`: KA-2026-020 komt overeen, KA-2026-030 wijkt af, KA-2026-040 wacht, KA-2026-010 is nog open. De productieseed blijft leeg.
 
 Dezelfde read-only controle draait ook als je een aanvraag opent, zodat de waarschuwing op het detailscherm staat. Het archief controleert niet opnieuw.
 

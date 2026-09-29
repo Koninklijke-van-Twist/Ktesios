@@ -196,7 +196,7 @@ check(strpos((string) ($intended['todo'] ?? ''), 'Ariadne') !== false, 'intended
 
 reset_state();
 $GLOBALS['ktesios_bc_customers_path'] = __DIR__ . '/../web/fixtures/bc_customers.json';
-$seedPath = __DIR__ . '/../web/fixtures/requests_seed.json';
+$seedPath = __DIR__ . '/fixtures/requests_seed.json';
 $seed = json_decode((string) file_get_contents($seedPath), true);
 check(is_array($seed), 'seed JSON loads');
 $first = ktesios_reconcile_requests($seed);
@@ -370,7 +370,7 @@ check($lockHeld === true, 'requests lock stays exclusive across the callback');
 
 $freshDir = $tmp . '/fresh-data';
 $GLOBALS['ktesios_requests_path'] = $freshDir . '/requests.json';
-$GLOBALS['ktesios_requests_seed_path'] = __DIR__ . '/../web/fixtures/requests_seed.json';
+$GLOBALS['ktesios_requests_seed_path'] = __DIR__ . '/fixtures/requests_seed.json';
 $seededCount = 0;
 ktesios_with_requests_lock(static function () use (&$seededCount): void {
     $seededCount = count(ktesios_load_requests());
@@ -464,6 +464,21 @@ try {
 check(strpos($dirError, $parentFile . '/child') !== false, 'missing data directory error names the path');
 check(strpos($dirError, 'schrijfbaar') !== false, 'missing data directory error mentions write access');
 unset($GLOBALS['ktesios_requests_seed_path']);
+
+$prodSeedRaw = (string) file_get_contents(__DIR__ . '/../web/fixtures/requests_seed.json');
+$prodSeed = json_decode($prodSeedRaw, true);
+check($prodSeed === [], 'production request seed is an empty list');
+check(strpos($prodSeedRaw, 'KA-2026') === false, 'production request seed has no demo ids');
+
+$emptyDir = $tmp . '/empty-seed';
+$GLOBALS['ktesios_requests_path'] = $emptyDir . '/requests.json';
+$emptyCount = -1;
+ktesios_with_requests_lock(static function () use (&$emptyCount): void {
+    $emptyCount = count(ktesios_load_requests());
+});
+check($emptyCount === 0, 'default seed copies an empty request list');
+$emptyRaw = (string) file_get_contents($emptyDir . '/requests.json');
+check(trim($emptyRaw) === '[]', 'default seed file is an empty JSON array');
 
 check(strpos((string) file_get_contents(__DIR__ . '/../web/index.php'), 'ktesios_with_requests_lock') !== false, 'worklist holds the lock around reconcile');
 check(strpos((string) file_get_contents(__DIR__ . '/../web/request.php'), 'ktesios_with_requests_lock') !== false, 'detail holds the lock around reconcile and approve');
