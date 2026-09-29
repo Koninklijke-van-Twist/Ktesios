@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/html.php';
 require_once __DIR__ . '/csrf.php';
+require_once __DIR__ . '/avatars.php';
 
 function ktesios_page_open(string $title): void
 {
@@ -260,4 +261,147 @@ function ktesios_render_confirm_form(array $request): void
     echo '<button class="btn btn-primary" type="submit">Ja, goedkeuren</button>';
     echo '<a class="btn" href="request.php?id=' . h(rawurlencode($id)) . '">Annuleren</a>';
     echo '</div></form>';
+}
+
+function ktesios_format_activity_time(string $value): string
+{
+    $value = trim($value);
+    if ($value === '') {
+        return '';
+    }
+    try {
+        $when = new DateTimeImmutable($value);
+    } catch (Exception $error) {
+        return $value;
+    }
+    return $when->setTimezone(new DateTimeZone('Europe/Amsterdam'))->format('d-m-Y H:i');
+}
+
+function ktesios_activity_initial(string $email): string
+{
+    $source = trim($email);
+    if ($source === '') {
+        return '·';
+    }
+    if (function_exists('mb_substr')) {
+        $letter = mb_substr($source, 0, 1, 'UTF-8');
+        return function_exists('mb_strtoupper') ? mb_strtoupper($letter, 'UTF-8') : strtoupper($letter);
+    }
+    return strtoupper(substr($source, 0, 1));
+}
+
+function ktesios_render_user_avatar(string $email): void
+{
+    $colors = ktesios_color_from_text($email);
+    $border = (string) $colors['border'];
+    $url = ktesios_user_avatar_url($email);
+    if ($url === '') {
+        echo '<span class="ktesios-user-avatar ktesios-user-avatar--fallback" style="border-color:'
+            . h($border)
+            . ';background:' . h((string) $colors['chipBackground'])
+            . ';color:' . h((string) $colors['chipTextColor'])
+            . '">' . h(ktesios_activity_initial($email)) . '</span>';
+        return;
+    }
+    echo '<img class="ktesios-user-avatar" src="' . h($url) . '" width="30" height="30" alt="" style="border-color:'
+        . h($border) . '">';
+}
+
+/**
+ * @param array<string, mixed> $message
+ */
+function ktesios_render_activity_message(array $message): void
+{
+    $email = strtolower(trim((string) ($message['email'] ?? '')));
+    $colors = ktesios_color_from_text($email);
+    $isSystem = (string) ($message['kind'] ?? '') === 'system';
+    $actorName = trim((string) ($message['actor_name'] ?? ''));
+    if ($actorName !== '') {
+        $author = $actorName;
+    } elseif ($email !== '') {
+        $author = $email;
+    } else {
+        $author = 'onbekend';
+    }
+    $when = ktesios_format_activity_time((string) ($message['created_at'] ?? ''));
+    echo '<div class="ktesios-message-row">';
+    echo '<div class="ktesios-message-avatar-wrap">';
+    ktesios_render_user_avatar($email);
+    echo '</div>';
+    echo '<article class="ktesios-message' . ($isSystem ? ' ktesios-message--system' : '') . '" style="border-color:'
+        . h((string) $colors['border']) . ';background:' . h((string) $colors['cardBackground']) . '">';
+    echo '<div class="ktesios-message-meta"><span class="ktesios-message-email" style="background:'
+        . h((string) $colors['chipBackground']) . ';color:' . h((string) $colors['chipTextColor']) . '">'
+        . h($author) . '</span>';
+    if ($when !== '') {
+        echo '<span>' . h($when) . '</span>';
+    }
+    echo '</div>';
+    echo '<div class="ktesios-message-text' . ($isSystem ? ' ktesios-message-system-text' : '') . '">'
+        . h((string) ($message['text'] ?? '')) . '</div>';
+    echo '</article></div>';
+}
+
+/**
+ * @param array<string, mixed> $request
+ */
+function ktesios_render_activity(array $request, string $draftText = ''): void
+{
+    $messages = function_exists('ktesios_request_messages') ? ktesios_request_messages($request) : [];
+    $id = (string) ($request['id'] ?? '');
+    echo '<section class="ktesios-detail-chat" id="activiteit">';
+    echo '<h2 class="ktesios-detail-chat-title">Activiteit</h2>';
+    echo '<div class="ktesios-messages" id="ktesios-messages">';
+    if ($messages === []) {
+        echo '<p class="hint ktesios-messages-empty">Nog geen activiteit.</p>';
+    }
+    foreach ($messages as $message) {
+        if (!is_array($message)) {
+            continue;
+        }
+        ktesios_render_activity_message($message);
+    }
+    echo '</div>';
+    echo '<form class="ktesios-message-compose" method="post" action="request.php?id=' . h(rawurlencode($id)) . '" id="ktesios-message-form">';
+    echo '<input type="hidden" name="csrf" value="' . h(ktesios_csrf_token()) . '">';
+    echo '<input type="hidden" name="actie" value="bericht">';
+    echo '<label class="ktesios-compose-label" for="ktesios-message-text">Bericht</label>';
+    echo '<textarea id="ktesios-message-text" class="ktesios-message-input" name="text" rows="2" maxlength="2000" required>'
+        . h($draftText) . '</textarea>';
+    echo '<p class="hint">Enter verstuurt. Shift+Enter maakt een nieuwe regel.</p>';
+    echo '<div class="actions"><button class="btn btn-primary" type="submit">Versturen</button></div>';
+    echo '</form>';
+    echo <<<'JS'
+<script>
+(function () {
+  var form = document.getElementById('ktesios-message-form');
+  var textarea = document.getElementById('ktesios-message-text');
+  var log = document.getElementById('ktesios-messages');
+  if (log) {
+    log.scrollTop = log.scrollHeight;
+  }
+  if (!form || !textarea) {
+    return;
+  }
+  function resize() {
+    var maxHeight = Math.min(window.innerHeight * 0.32, 280);
+    textarea.style.height = 'auto';
+    var nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+    textarea.style.height = nextHeight + 'px';
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }
+  textarea.addEventListener('input', resize);
+  textarea.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      if (textarea.value.replace(/\s/g, '') !== '') {
+        form.submit();
+      }
+    }
+  });
+  resize();
+})();
+</script>
+JS;
+    echo '</section>';
 }

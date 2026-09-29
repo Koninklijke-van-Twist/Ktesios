@@ -200,6 +200,140 @@ pre {
   font-size: 0.85rem;
 }
 
+.ktesios-detail-chat {
+  display: flex;
+  flex-direction: column;
+  margin: 1.2rem 0 0;
+  padding: 18px 20px 20px;
+  background: linear-gradient(180deg, #f8fbff 0%, #f3f7fc 100%);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-height: 0;
+}
+
+.ktesios-detail-chat-title {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+  color: var(--navy);
+}
+
+.ktesios-messages {
+  display: grid;
+  gap: 10px;
+  max-height: 28rem;
+  min-height: 4.5rem;
+  overflow-y: auto;
+  overflow-x: visible;
+  padding: 0 4px 4px 12px;
+  align-content: start;
+}
+
+.ktesios-messages-empty { margin: 0.35rem 0; }
+
+.ktesios-message-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  overflow: visible;
+}
+
+.ktesios-message-avatar-wrap {
+  flex: 0 0 30px;
+  margin-right: -9px;
+  margin-top: 6px;
+  position: relative;
+  z-index: 2;
+}
+
+.ktesios-message-row .ktesios-message {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ktesios-message {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px 10px 16px;
+}
+
+.ktesios-message-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.ktesios-message-email {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+.ktesios-message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ktesios-message--system .ktesios-message-system-text { font-style: italic; }
+
+.ktesios-user-avatar {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: block;
+  border: 1px solid;
+  border-radius: 4px;
+  background: #fff;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  object-fit: none;
+  box-sizing: border-box;
+}
+
+.ktesios-user-avatar--fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ktesios-message-compose {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.ktesios-compose-label {
+  display: block;
+  font-weight: 700;
+  color: var(--navy);
+  font-size: 0.9rem;
+}
+
+.ktesios-message-input {
+  width: 100%;
+  min-height: 2.75rem;
+  max-height: min(32vh, 280px);
+  resize: none;
+  overflow-y: hidden;
+  font: inherit;
+  color: var(--ink);
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  padding: 10px 12px;
+  box-sizing: border-box;
+  line-height: 1.45;
+  background: #fff;
+}
+
 @media (max-width: 640px) {
   .fields, .form-grid { grid-template-columns: 1fr; }
   .form-grid .wide { grid-column: auto; }

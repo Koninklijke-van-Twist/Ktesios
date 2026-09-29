@@ -18,5 +18,6 @@ if (!is_file(__DIR__ . '/../auth.php')) {
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/../logincheck.php';
 require_once __DIR__ . '/requests_store.php';
+require_once __DIR__ . '/avatars.php';
 require_once __DIR__ . '/bc_customer.php';
 require_once __DIR__ . '/layout.php';

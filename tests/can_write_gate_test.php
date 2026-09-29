@@ -528,6 +528,8 @@ $phpFiles = [
     'web/lib/bootstrap.php',
     'web/lib/html.php',
     'web/lib/csrf.php',
+    'web/lib/avatars.php',
+    'web/user_avatar.php',
 ];
 foreach ($phpFiles as $relative) {
     $source = (string) file_get_contents(__DIR__ . '/../' . $relative);

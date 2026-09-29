@@ -24,9 +24,13 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: "8.0"
+          extensions: gd, mbstring
 
       - name: Write-gate and reconciliation tests
         run: php tests/can_write_gate_test.php
+
+      - name: Activity, chat and avatar tests
+        run: php tests/activity_test.php
 
       - name: FTP remote dir guard
         run: bash tests/guard_ftp_remote_dir_test.sh
