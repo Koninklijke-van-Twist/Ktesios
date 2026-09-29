@@ -215,8 +215,9 @@ function ktesios_seed_requests(): void
 
 /**
  * Schrijf het storebestand alleen als het nog niet bestaat.
- * Geen flock: de eerste kopie moet ook lukken als het bestandssysteem
- * geen sloten ondersteunt. De exclusieve lock komt daarna.
+ * link() en fopen-modus xb maken het doel exclusief. rename() zou een
+ * bestaande lijst vervangen, ook als een ander verzoek die al had
+ * vergrendeld, vergeleken en opgeslagen.
  */
 function ktesios_create_store_file(string $path, string $contents): void
 {
@@ -241,26 +242,47 @@ function ktesios_create_store_file(string $path, string $contents): void
         @unlink($tmp);
         return;
     }
-    // link() faalt als het doel al bestaat, dus een bestaande lijst blijft staan.
-    // rename is de terugval als deze schijf geen harde links kent; twee eerste
-    // starts schrijven dan dezelfde voorbeeldlijst.
     if (@link($tmp, $path)) {
         @unlink($tmp);
         return;
     }
-    if (is_file($path)) {
-        @unlink($tmp);
-        return;
-    }
-    error_clear_last();
-    if (@rename($tmp, $path)) {
-        return;
-    }
-    if (is_file($path)) {
-        @unlink($tmp);
-        return;
-    }
     @unlink($tmp);
+    if (is_file($path)) {
+        return;
+    }
+    ktesios_create_store_exclusive($path, $contents);
+}
+
+/**
+ * Tweede poging als deze schijf geen harde links kent. Modus xb faalt als het
+ * bestand intussen bestaat, en vervangt het dan niet.
+ */
+function ktesios_create_store_exclusive(string $path, string $contents): void
+{
+    if (is_file($path)) {
+        return;
+    }
+    $dir = dirname($path);
+    error_clear_last();
+    $handle = @fopen($path, 'xb');
+    if ($handle === false) {
+        if (is_file($path)) {
+            return;
+        }
+        throw new RuntimeException(ktesios_io_hint(
+            'Aanvragen konden niet worden weggeschreven. Geprobeerd pad: ' . $path
+            . '. Maak de map schrijfbaar voor de webserver: ' . $dir . '.'
+        ));
+    }
+    $written = @fwrite($handle, $contents);
+    @fflush($handle);
+    @fclose($handle);
+    if (is_int($written) && $written === strlen($contents)) {
+        return;
+    }
+    if (is_file($path) && filesize($path) === $written) {
+        @unlink($path);
+    }
     throw new RuntimeException(ktesios_io_hint(
         'Aanvragen konden niet worden weggeschreven. Geprobeerd pad: ' . $path
         . '. Maak de map schrijfbaar voor de webserver: ' . $dir . '.'
@@ -318,6 +340,9 @@ function ktesios_with_requests_lock(callable $callback)
                 . $dir
                 . '), of zet het project op een lokale schijf als dit een netwerkschijf of synchronisatiemap is.'
             ));
+        }
+        if (!is_file($path)) {
+            ktesios_seed_requests();
         }
         return $callback();
     } finally {

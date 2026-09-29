@@ -410,6 +410,24 @@ $GLOBALS['ktesios_requests_path'] = $keptPath;
 ktesios_with_requests_lock(static function (): void {
 });
 check(strpos((string) file_get_contents($keptPath), 'KA-2026-099') !== false, 'existing store is not reseeded');
+$keptRaw = (string) file_get_contents($keptPath);
+ktesios_create_store_file($keptPath, "[{\"id\":\"KA-2026-010\"}]\n");
+check(file_get_contents($keptPath) === $keptRaw, 'exclusive seed create does not replace an existing store');
+ktesios_create_store_exclusive($keptPath, "[{\"id\":\"KA-2026-010\"}]\n");
+check(file_get_contents($keptPath) === $keptRaw, 'exclusive fopen does not replace an existing store');
+$exclusiveDir = $tmp . '/exclusive-only';
+if (!mkdir($exclusiveDir, 0775, true) && !is_dir($exclusiveDir)) {
+    fwrite(STDERR, "cannot create exclusive-only\n");
+    exit(1);
+}
+$exclusivePath = $exclusiveDir . '/requests.json';
+ktesios_create_store_exclusive($exclusivePath, "[{\"id\":\"KA-2026-042\"}]\n");
+ktesios_create_store_exclusive($exclusivePath, "[{\"id\":\"KA-2026-099\"}]\n");
+check(strpos((string) file_get_contents($exclusivePath), 'KA-2026-042') !== false, 'exclusive fopen creates once and leaves that file alone');
+$seedFn = strstr((string) file_get_contents(__DIR__ . '/../web/lib/requests_store.php'), 'function ktesios_create_store_file');
+$seedFn = is_string($seedFn) ? substr($seedFn, 0, (int) strpos($seedFn, "\nfunction ")) : '';
+check($seedFn !== '' && strpos($seedFn, 'rename(') === false, 'seed create does not rename over the store');
+check(strpos($seedFn, 'link(') !== false, 'seed create publishes with link when the file is still absent');
 
 $blockedDir = $tmp . '/lock-blocked';
 if (!mkdir($blockedDir, 0775, true) && !is_dir($blockedDir)) {
