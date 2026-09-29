@@ -16,7 +16,9 @@ Open <http://localhost:8765/>.
 
 `web/auth.php` staat in `.gitignore`. Laat `$canWriteToBC = false` staan.
 Zonder `$mimirApi` vergelijkt het overzicht met `web/fixtures/bc_customers.json`.
-De eerste keer kopieert de app `web/fixtures/requests_seed.json` naar `web/data/requests.json` (ook gitignored).
+De eerste keer maakt de app `web/data/` aan als die map ontbreekt en kopieert `web/fixtures/requests_seed.json` naar `web/data/requests.json` (ook gitignored).
+
+Lukt de vergrendeling daarna niet, dan toont het overzicht het geprobeerde lockpad (`web/data/requests.json.lock`) en dat die map schrijfbaar moet zijn voor de webserver. Een netwerkschijf of synchronisatiemap weigert `flock` soms terwijl schrijven wel lukt; zet de checkout dan op een lokale schijf. Zonder slot gaat de pagina niet alleen-lezen verder: de controle bij laden schrijft statussen weg, en twee verzoeken zouden `requests.json` anders overschrijven.
 
 Wis `web/data/requests.json` om de voorbeeldlijst terug te zetten.
 

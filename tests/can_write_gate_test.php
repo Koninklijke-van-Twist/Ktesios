@@ -36,6 +36,7 @@ function reset_state(): void
         $GLOBALS['auth'],
         $GLOBALS['ktesios_bc_write_invocations'],
         $GLOBALS['ktesios_requests_path'],
+        $GLOBALS['ktesios_requests_seed_path'],
         $GLOBALS['ktesios_bc_write_log_path'],
         $GLOBALS['ktesios_bc_customers_path']
     );
@@ -360,11 +361,92 @@ ktesios_with_requests_lock(static function () use (&$lockHeld): void {
     }
 });
 check($lockHeld === true, 'requests lock stays exclusive across the callback');
+
+$freshDir = $tmp . '/fresh-data';
+$GLOBALS['ktesios_requests_path'] = $freshDir . '/requests.json';
+$GLOBALS['ktesios_requests_seed_path'] = __DIR__ . '/../web/fixtures/requests_seed.json';
+$seededCount = 0;
+ktesios_with_requests_lock(static function () use (&$seededCount): void {
+    $seededCount = count(ktesios_load_requests());
+});
+check(is_dir($freshDir), 'missing data directory is created before the lock');
+check(is_writable($freshDir), 'created data directory is writable');
+check(is_file($freshDir . '/requests.json'), 'missing store is seeded from fixtures before the lock');
+check($seededCount >= 1, 'locked load sees the seeded requests');
+check(strpos((string) file_get_contents($freshDir . '/requests.json'), 'KA-2026-010') !== false, 'seed copy keeps the fixture ids');
+
+$repairDir = $tmp . '/repair-data';
+if (!mkdir($repairDir, 0555, true) && !is_dir($repairDir)) {
+    fwrite(STDERR, "cannot create repair-data\n");
+    exit(1);
+}
+$GLOBALS['ktesios_requests_path'] = $repairDir . '/requests.json';
+$repaired = false;
+try {
+    ktesios_with_requests_lock(static function () use (&$repaired): void {
+        $repaired = is_file(ktesios_requests_path());
+    });
+} catch (RuntimeException $error) {
+    fwrite(STDERR, 'repair lock error: ' . $error->getMessage() . "\n");
+}
+check($repaired === true, 'owned data directory is made writable before the lock');
+check(is_file($repairDir . '/requests.json'), 'seed runs after the directory is made writable');
+@chmod($repairDir, 0775);
+
+$keptDir = $tmp . '/kept-data';
+if (!mkdir($keptDir, 0775, true) && !is_dir($keptDir)) {
+    fwrite(STDERR, "cannot create kept-data\n");
+    exit(1);
+}
+$keptPath = $keptDir . '/requests.json';
+file_put_contents($keptPath, "[{\"id\":\"KA-2026-099\"}]\n");
+$GLOBALS['ktesios_requests_path'] = $keptPath;
+ktesios_with_requests_lock(static function (): void {
+});
+check(strpos((string) file_get_contents($keptPath), 'KA-2026-099') !== false, 'existing store is not reseeded');
+
+$blockedDir = $tmp . '/lock-blocked';
+if (!mkdir($blockedDir, 0775, true) && !is_dir($blockedDir)) {
+    fwrite(STDERR, "cannot create lock-blocked\n");
+    exit(1);
+}
+if (!mkdir($blockedDir . '/requests.json.lock', 0775, true) && !is_dir($blockedDir . '/requests.json.lock')) {
+    fwrite(STDERR, "cannot create lock path blocker\n");
+    exit(1);
+}
+$GLOBALS['ktesios_requests_path'] = $blockedDir . '/requests.json';
+$lockError = '';
+try {
+    ktesios_with_requests_lock(static function (): void {
+    });
+} catch (RuntimeException $error) {
+    $lockError = $error->getMessage();
+}
+check($lockError !== '', 'unopenable lock file is an error');
+check(strpos($lockError, $blockedDir . '/requests.json.lock') !== false, 'lock error names the path that was tried');
+check(strpos($lockError, 'schrijfbaar') !== false, 'lock error tells you to make the directory writable');
+check(is_file($blockedDir . '/requests.json'), 'store is seeded even when the lock cannot be opened');
+
+$parentFile = $tmp . '/not-a-directory';
+file_put_contents($parentFile, 'x');
+$GLOBALS['ktesios_requests_path'] = $parentFile . '/child/requests.json';
+$dirError = '';
+try {
+    ktesios_with_requests_lock(static function (): void {
+    });
+} catch (RuntimeException $error) {
+    $dirError = $error->getMessage();
+}
+check(strpos($dirError, $parentFile . '/child') !== false, 'missing data directory error names the path');
+check(strpos($dirError, 'schrijfbaar') !== false, 'missing data directory error mentions write access');
+unset($GLOBALS['ktesios_requests_seed_path']);
+
 check(strpos((string) file_get_contents(__DIR__ . '/../web/index.php'), 'ktesios_with_requests_lock') !== false, 'worklist holds the lock around reconcile');
 check(strpos((string) file_get_contents(__DIR__ . '/../web/request.php'), 'ktesios_with_requests_lock') !== false, 'detail holds the lock around reconcile and approve');
 
 $index = (string) file_get_contents(__DIR__ . '/../web/index.php');
 check(strpos($index, 'ktesios_reconcile_requests') !== false, 'worklist reconciles on load');
+check(strpos($index, 'getMessage()') !== false, 'worklist shows the storage error text');
 $requestPage = (string) file_get_contents(__DIR__ . '/../web/request.php');
 check(strpos($requestPage, 'approve-modal') !== false, 'detail page has a confirmation modal');
 check(strpos($requestPage, 'stap=bevestigen') !== false, 'detail page has a no-js confirmation step');
