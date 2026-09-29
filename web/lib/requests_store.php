@@ -110,7 +110,7 @@ function ktesios_next_request_id(array $requests): string
  * @param array<string, mixed> $input
  * @return array{ok: bool, error: string, request: array<string, mixed>, requests: list<array<string, mixed>>}
  */
-function ktesios_create_open_request(array $requests, array $input, string $actor): array
+function ktesios_create_open_request(array $requests, array $input, string $actor, string $actorName = ''): array
 {
     $customer = ktesios_customer_from_input($input);
     if ($customer['name'] === '') {
@@ -139,7 +139,15 @@ function ktesios_create_open_request(array $requests, array $input, string $acto
         'bcDiff' => [],
         'note' => $note,
         'customer' => $customer,
+        'messages' => [],
     ];
+    $request = ktesios_append_message(
+        $request,
+        $actor,
+        ktesios_describe_create($request),
+        'system',
+        $actorName
+    );
     $requests[] = $request;
     return ['ok' => true, 'error' => '', 'request' => $request, 'requests' => $requests];
 }
@@ -149,13 +157,14 @@ function ktesios_create_open_request(array $requests, array $input, string $acto
  * @param array<string, mixed> $input
  * @return array{ok: bool, error: string, request: array<string, mixed>}
  */
-function ktesios_edit_open_request(array $request, array $input): array
+function ktesios_edit_open_request(array $request, array $input, string $actor = '', string $actorName = ''): array
 {
     if ((string) ($request['status'] ?? '') !== 'open') {
         return ['ok' => false, 'error' => 'Alleen een open aanvraag kan worden gewijzigd.', 'request' => $request];
     }
     $existingCustomer = $request['customer'] ?? null;
     $existing = is_array($existingCustomer) ? $existingCustomer : [];
+    $beforeNote = (string) ($request['note'] ?? '');
     $customer = ktesios_customer_from_input($input, $existing);
     if ($customer['name'] === '') {
         return ['ok' => false, 'error' => 'Vul een bedrijfsnaam in.', 'request' => $request];
@@ -163,6 +172,10 @@ function ktesios_edit_open_request(array $request, array $input): array
     $request['customer'] = $customer;
     if (isset($input['note']) && is_string($input['note'])) {
         $request['note'] = ktesios_clip($input['note'], 1000, false);
+    }
+    $changeText = ktesios_describe_field_changes($existing, $customer, $beforeNote, (string) ($request['note'] ?? ''));
+    if ($changeText !== '') {
+        $request = ktesios_append_message($request, $actor, $changeText, 'system', $actorName);
     }
     return ['ok' => true, 'error' => '', 'request' => $request];
 }
@@ -431,4 +444,271 @@ function ktesios_ensure_dir(string $dir): void
     if (is_dir($dir) && !is_writable($dir)) {
         @chmod($dir, 0775);
     }
+}
+
+function ktesios_message_max_length(): int
+{
+    return 2000;
+}
+
+function ktesios_normalize_actor_name(string $name): string
+{
+    $name = str_replace("\0", '', $name);
+    $collapsed = preg_replace('/\s+/u', ' ', $name);
+    return ktesios_clip(trim(is_string($collapsed) ? $collapsed : ''), 80, true);
+}
+
+/**
+ * Oude aanvragen hebben geen messages-sleutel. Die tellen als een lege lijst.
+ *
+ * @param array<string, mixed> $request
+ * @return list<array<string, mixed>>
+ */
+function ktesios_request_messages(array $request): array
+{
+    $messages = $request['messages'] ?? null;
+    if (!is_array($messages)) {
+        return [];
+    }
+    $out = [];
+    foreach ($messages as $message) {
+        if (is_array($message)) {
+            $out[] = $message;
+        }
+    }
+    return $out;
+}
+
+/**
+ * @param array<string, mixed> $message
+ * @return array{id: int, email: string, text: string, kind: string, created_at: string, actor_name: string}
+ */
+function ktesios_normalize_message(array $message): array
+{
+    $kind = (string) ($message['kind'] ?? 'user');
+    if ($kind !== 'system') {
+        $kind = 'user';
+    }
+    return [
+        'id' => (int) ($message['id'] ?? 0),
+        'email' => strtolower(trim((string) ($message['email'] ?? ''))),
+        'text' => ktesios_clip((string) ($message['text'] ?? ''), ktesios_message_max_length(), false),
+        'kind' => $kind,
+        'created_at' => (string) ($message['created_at'] ?? ''),
+        'actor_name' => ktesios_normalize_actor_name((string) ($message['actor_name'] ?? '')),
+    ];
+}
+
+/**
+ * @param list<array<string, mixed>> $messages
+ */
+function ktesios_next_message_id(array $messages): int
+{
+    $max = 0;
+    foreach ($messages as $message) {
+        $id = (int) ($message['id'] ?? 0);
+        if ($id > $max) {
+            $max = $id;
+        }
+    }
+    return $max + 1;
+}
+
+/**
+ * @param array<string, mixed> $request
+ * @return array<string, mixed>
+ */
+function ktesios_append_message(array $request, string $email, string $text, string $kind, string $actorName = ''): array
+{
+    $text = ktesios_clip($text, ktesios_message_max_length(), false);
+    if ($text === '') {
+        return $request;
+    }
+    $messages = [];
+    foreach (ktesios_request_messages($request) as $existing) {
+        $messages[] = ktesios_normalize_message($existing);
+    }
+    $email = strtolower(trim($email));
+    if ($email === '') {
+        $email = 'lokaal';
+    }
+    if ($kind !== 'system') {
+        $kind = 'user';
+    }
+    $messages[] = [
+        'id' => ktesios_next_message_id($messages),
+        'email' => $email,
+        'text' => $text,
+        'kind' => $kind,
+        'created_at' => gmdate('Y-m-d\TH:i:s\Z'),
+        'actor_name' => ktesios_normalize_actor_name($actorName),
+    ];
+    $request['messages'] = $messages;
+    return $request;
+}
+
+/**
+ * @param array<string, mixed> $request
+ * @return array{ok: bool, error: string, request: array<string, mixed>}
+ */
+function ktesios_add_user_message(array $request, string $email, string $text, string $actorName = ''): array
+{
+    $clipped = ktesios_clip($text, ktesios_message_max_length(), false);
+    if ($clipped === '') {
+        return ['ok' => false, 'error' => 'Vul een bericht in.', 'request' => $request];
+    }
+    return [
+        'ok' => true,
+        'error' => '',
+        'request' => ktesios_append_message($request, $email, $clipped, 'user', $actorName),
+    ];
+}
+
+/**
+ * @return array<string, string>
+ */
+function ktesios_activity_field_labels(): array
+{
+    return [
+        'customerNo' => 'Klantnummer',
+        'name' => 'Bedrijfsnaam',
+        'contact' => 'Contactpersoon',
+        'address' => 'Adres',
+        'postCode' => 'Postcode',
+        'city' => 'Plaats',
+        'country' => 'Land',
+        'phone' => 'Telefoon',
+        'email' => 'E-mail',
+        'vat' => 'BTW-nummer',
+        'kvk' => 'KvK-nummer',
+    ];
+}
+
+/**
+ * @param list<string> $parts
+ */
+function ktesios_activity_sentence(array $parts): string
+{
+    $clean = [];
+    foreach ($parts as $part) {
+        $part = rtrim(trim($part), '.');
+        if ($part !== '') {
+            $clean[] = $part;
+        }
+    }
+    if ($clean === []) {
+        return '';
+    }
+    return implode('. ', $clean) . '.';
+}
+
+function ktesios_activity_snippet(string $value): string
+{
+    $single = ktesios_clip($value, 48, true);
+    $full = ktesios_clip($value, 1000, true);
+    if ($single === '') {
+        return '—';
+    }
+    if ($full !== $single) {
+        return $single . '…';
+    }
+    return $single;
+}
+
+/**
+ * @param array<string, mixed> $request
+ */
+function ktesios_describe_create(array $request): string
+{
+    $id = trim((string) ($request['id'] ?? ''));
+    $customer = $request['customer'] ?? null;
+    $name = '';
+    if (is_array($customer)) {
+        $name = trim((string) ($customer['name'] ?? ''));
+    }
+    return ktesios_activity_sentence(['Aanvraag ' . $id . ' aangemaakt voor ' . $name]);
+}
+
+/**
+ * @param array<string, mixed> $beforeCustomer
+ * @param array<string, mixed> $afterCustomer
+ */
+function ktesios_describe_field_changes(array $beforeCustomer, array $afterCustomer, string $beforeNote, string $afterNote): string
+{
+    $parts = [];
+    foreach (ktesios_activity_field_labels() as $key => $label) {
+        $before = ktesios_clip((string) ($beforeCustomer[$key] ?? ''), 200, true);
+        $after = ktesios_clip((string) ($afterCustomer[$key] ?? ''), 200, true);
+        if ($before === $after) {
+            continue;
+        }
+        $parts[] = $label . ' (' . ktesios_activity_snippet($before) . ' → ' . ktesios_activity_snippet($after) . ')';
+    }
+    $beforeNoteNorm = ktesios_clip($beforeNote, 1000, false);
+    $afterNoteNorm = ktesios_clip($afterNote, 1000, false);
+    if ($beforeNoteNorm !== $afterNoteNorm) {
+        $parts[] = 'Opmerking (' . ktesios_activity_snippet($beforeNoteNorm) . ' → ' . ktesios_activity_snippet($afterNoteNorm) . ')';
+    }
+    if ($parts === []) {
+        return '';
+    }
+    return 'Velden gewijzigd: ' . implode(', ', $parts) . '.';
+}
+
+/**
+ * @param array<string, mixed> $request
+ */
+function ktesios_describe_approval(array $request): string
+{
+    $status = (string) ($request['status'] ?? '');
+    $note = ktesios_clip(trim((string) ($request['bcNote'] ?? '')), 300, true);
+    $reason = ktesios_clip(trim((string) ($request['archiveReason'] ?? '')), 300, true);
+    $customerNo = ktesios_clip(trim((string) ($request['bcCustomerNo'] ?? '')), 40, true);
+    $parts = [$status === 'archived' ? 'Goedgekeurd en gearchiveerd' : 'Goedgekeurd'];
+    if ($reason !== '') {
+        $parts[] = 'Reden: ' . $reason;
+    }
+    if ($customerNo !== '') {
+        $parts[] = 'BC-klantnummer: ' . $customerNo;
+    }
+    if ($note !== '' && $note !== $reason) {
+        $parts[] = 'BC-sync: ' . $note;
+    }
+    return ktesios_activity_sentence($parts);
+}
+
+/**
+ * @param array<string, string> $before
+ * @param array<string, mixed> $after
+ */
+function ktesios_describe_sync_activity(array $before, array $after): string
+{
+    $statusBefore = (string) ($before['status'] ?? '');
+    $statusAfter = (string) ($after['status'] ?? '');
+    $note = ktesios_clip(trim((string) ($after['bcNote'] ?? '')), 300, true);
+    $reason = ktesios_clip(trim((string) ($after['archiveReason'] ?? '')), 300, true);
+    $customerNo = ktesios_clip(trim((string) ($after['bcCustomerNo'] ?? '')), 40, true);
+
+    if ($statusAfter === 'archived' && $statusBefore !== 'archived') {
+        $parts = ['Gearchiveerd'];
+        if ($reason !== '') {
+            $parts[] = 'Reden: ' . $reason;
+        }
+        if ($customerNo !== '') {
+            $parts[] = 'BC-klantnummer: ' . $customerNo;
+        }
+        if ($note !== '' && $note !== $reason) {
+            $parts[] = 'BC-sync: ' . $note;
+        }
+        return ktesios_activity_sentence($parts);
+    }
+
+    $parts = ['BC-sync'];
+    if ($note !== '') {
+        $parts = ['BC-sync: ' . $note];
+    }
+    if ($customerNo !== '') {
+        $parts[] = 'BC-klantnummer: ' . $customerNo;
+    }
+    return ktesios_activity_sentence($parts);
 }

@@ -370,6 +370,7 @@ function ktesios_reconcile_requests(array $requests, ?callable $finder = null): 
             continue;
         }
 
+        $syncBefore = ktesios_sync_snapshot($request);
         $before = json_encode($request, JSON_UNESCAPED_UNICODE);
         $lookup = $finder($request);
         if (!is_array($lookup)) {
@@ -421,6 +422,12 @@ function ktesios_reconcile_requests(array $requests, ?callable $finder = null): 
                     'diff' => $diff,
                 ];
             }
+        }
+
+        $syncAfter = ktesios_sync_snapshot($request);
+        if ($syncAfter !== $syncBefore && function_exists('ktesios_append_message')) {
+            $activity = ktesios_describe_sync_activity($syncBefore, $request);
+            $request = ktesios_append_message($request, ktesios_actor(), $activity, 'system', ktesios_actor_name());
         }
 
         $after = json_encode($request, JSON_UNESCAPED_UNICODE);
@@ -575,7 +582,7 @@ function ktesios_bc_write_customer(array $payload, string $requestId = ''): arra
  * @param array<string, mixed> $request
  * @return array{ok: bool, mode: string, error: string, request: array<string, mixed>, result: array<string, mixed>}
  */
-function ktesios_approve_request(array $request, string $actor): array
+function ktesios_approve_request(array $request, string $actor, string $actorName = ''): array
 {
     if ((string) ($request['status'] ?? '') !== 'open') {
         return [
@@ -603,7 +610,7 @@ function ktesios_approve_request(array $request, string $actor): array
             'ok' => true,
             'mode' => 'dry-run',
             'error' => '',
-            'request' => $updated,
+            'request' => ktesios_record_approval_activity($updated, $actor, $actorName),
             'result' => [
                 'ok' => true,
                 'mode' => 'dry-run',
@@ -651,7 +658,7 @@ function ktesios_approve_request(array $request, string $actor): array
         'ok' => true,
         'mode' => 'stub',
         'error' => '',
-        'request' => $updated,
+        'request' => ktesios_record_approval_activity($updated, $actor, $actorName),
         'result' => $write,
     ];
 }
@@ -668,6 +675,59 @@ function ktesios_actor(): string
         return $email;
     }
     return 'lokaal';
+}
+
+function ktesios_actor_name(): string
+{
+    $user = $_SESSION['user'] ?? null;
+    if (!is_array($user)) {
+        return '';
+    }
+    $email = ktesios_current_email();
+    $keys = ['name', 'displayName', 'display_name', 'Naam', 'naam', 'full_name'];
+    foreach ($keys as $key) {
+        if (!isset($user[$key]) || !is_string($user[$key])) {
+            continue;
+        }
+        $name = function_exists('ktesios_normalize_actor_name')
+            ? ktesios_normalize_actor_name($user[$key])
+            : trim($user[$key]);
+        if ($name === '') {
+            continue;
+        }
+        if ($email !== '' && strtolower($name) === $email) {
+            continue;
+        }
+        return $name;
+    }
+    return '';
+}
+
+/**
+ * @param array<string, mixed> $request
+ * @return array<string, string>
+ */
+function ktesios_sync_snapshot(array $request): array
+{
+    return [
+        'status' => (string) ($request['status'] ?? ''),
+        'bcSync' => (string) ($request['bcSync'] ?? ''),
+        'bcNote' => (string) ($request['bcNote'] ?? ''),
+        'bcCustomerNo' => (string) ($request['bcCustomerNo'] ?? ''),
+        'archiveReason' => (string) ($request['archiveReason'] ?? ''),
+    ];
+}
+
+/**
+ * @param array<string, mixed> $request
+ * @return array<string, mixed>
+ */
+function ktesios_record_approval_activity(array $request, string $actor, string $actorName): array
+{
+    if (!function_exists('ktesios_append_message') || !function_exists('ktesios_describe_approval')) {
+        return $request;
+    }
+    return ktesios_append_message($request, $actor, ktesios_describe_approval($request), 'system', $actorName);
 }
 
 /**
@@ -702,8 +762,45 @@ function ktesios_requester_hint(): string
 }
 
 /**
+ * Vrij bericht. Iedereen die de aanvraag mag zien, dus niet alleen een goedkeurder.
+ * Het CSRF-token wordt hier gecontroleerd, vóór er een bericht bij komt.
+ *
+ * @param list<array<string, mixed>> $requests
+ * @param array<string, mixed> $request
+ * @param array<string, mixed> $post
+ * @return array{saved: bool, rotate: bool, error: string, requests: list<array<string, mixed>>}
+ */
+function ktesios_apply_message_action(array $requests, array $request, array $post, bool $csrfOk): array
+{
+    $none = [
+        'saved' => false,
+        'rotate' => false,
+        'error' => '',
+        'requests' => $requests,
+    ];
+    if (!$csrfOk) {
+        $none['error'] = 'Deze actie hoort niet bij je sessie. Laad de pagina opnieuw.';
+        return $none;
+    }
+    $text = isset($post['text']) && is_string($post['text']) ? $post['text'] : '';
+    $added = ktesios_add_user_message($request, ktesios_actor(), $text, ktesios_actor_name());
+    if ($added['ok'] !== true) {
+        $none['error'] = $added['error'] !== '' ? $added['error'] : 'Bericht is niet opgeslagen.';
+        $none['rotate'] = true;
+        return $none;
+    }
+    return [
+        'saved' => true,
+        'rotate' => true,
+        'error' => '',
+        'requests' => ktesios_replace_request($requests, $added['request']),
+    ];
+}
+
+/**
  * POST op de detailpagina. Goedkeuren en wijzigen eisen een goedkeurder én een
- * geldig CSRF-token. De controle gebeurt hier, niet alleen in de HTML.
+ * geldig CSRF-token. Een vrij bericht mag iedereen die de pagina ziet, met CSRF.
+ * De controle gebeurt hier, niet alleen in de HTML.
  *
  * @param list<array<string, mixed>> $requests
  * @param array<string, mixed> $request
@@ -719,6 +816,9 @@ function ktesios_apply_request_action(array $requests, array $request, array $po
         'requests' => $requests,
     ];
     $actie = (string) ($post['actie'] ?? '');
+    if ($actie === 'bericht') {
+        return ktesios_apply_message_action($requests, $request, $post, $csrfOk);
+    }
     if ($actie !== 'goedkeuren' && $actie !== 'wijzigen') {
         $none['error'] = 'Onbekende actie.';
         return $none;
@@ -737,7 +837,7 @@ function ktesios_apply_request_action(array $requests, array $request, array $po
             $none['rotate'] = true;
             return $none;
         }
-        $decision = ktesios_approve_request($request, ktesios_actor());
+        $decision = ktesios_approve_request($request, ktesios_actor(), ktesios_actor_name());
         if ($decision['ok'] !== true) {
             $none['error'] = $decision['error'] !== '' ? $decision['error'] : 'Goedkeuren is niet gelukt.';
             $none['rotate'] = true;
@@ -751,7 +851,7 @@ function ktesios_apply_request_action(array $requests, array $request, array $po
         ];
     }
 
-    $edited = ktesios_edit_open_request($request, $post);
+    $edited = ktesios_edit_open_request($request, $post, ktesios_actor(), ktesios_actor_name());
     if ($edited['ok'] !== true) {
         $none['error'] = $edited['error'] !== '' ? $edited['error'] : 'Wijzigen is niet gelukt.';
         $none['rotate'] = true;

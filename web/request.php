@@ -24,6 +24,7 @@ try {
         $request = ktesios_find_request($requests, $id);
         $postError = '';
         $redirect = '';
+        $draftText = '';
         if ($request !== null && (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST')) {
             $postedCsrf = isset($_POST['csrf']) && is_string($_POST['csrf']) ? $_POST['csrf'] : '';
             $csrfOk = ktesios_csrf_valid($postedCsrf);
@@ -33,6 +34,9 @@ try {
             }
             if ($outcome['error'] !== '') {
                 $postError = $outcome['error'];
+                if ((string) ($_POST['actie'] ?? '') === 'bericht' && isset($_POST['text']) && is_string($_POST['text'])) {
+                    $draftText = $_POST['text'];
+                }
             } elseif ($outcome['saved'] === true) {
                 ktesios_save_requests($outcome['requests']);
                 $redirect = 'request.php?id=' . rawurlencode($id) . '&gemeld=1';
@@ -42,6 +46,7 @@ try {
             'request' => $request,
             'postError' => $postError,
             'redirect' => $redirect,
+            'draftText' => $draftText,
         ];
     });
 } catch (Throwable $error) {
@@ -59,6 +64,7 @@ if ($handled['redirect'] !== '') {
 
 $request = $handled['request'];
 $postError = $handled['postError'];
+$draftText = (string) ($handled['draftText'] ?? '');
 if (!is_array($request)) {
     http_response_code(404);
     ktesios_page_open('Aanvraag');
@@ -217,5 +223,7 @@ if ($isOpen && $mayChange && !$confirming) {
 </script>
 JS;
 }
+
+ktesios_render_activity($request, $draftText);
 
 ktesios_page_close();

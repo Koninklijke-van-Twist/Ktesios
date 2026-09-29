@@ -18,7 +18,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         try {
             $created = ktesios_with_requests_lock(static function (): array {
                 $requests = ktesios_load_requests();
-                $result = ktesios_create_open_request($requests, $_POST, ktesios_actor());
+                $result = ktesios_create_open_request($requests, $_POST, ktesios_actor(), ktesios_actor_name());
                 if ($result['ok'] === true) {
                     ktesios_save_requests($result['requests']);
                 }
