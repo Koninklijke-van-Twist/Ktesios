@@ -16,8 +16,8 @@
  *
  * $approvers
  *   Lijst met e-mailadressen (strings). Alleen die accounts mogen een aanvraag
- *   goedkeuren of de gegevens wijzigen. Iedereen die mag inloggen mag wel een
- *   nieuwe aanvraag indienen; goedkeurders ook.
+ *   goedkeuren, afkeuren of de gegevens wijzigen. Iedereen die mag inloggen mag
+ *   wel een nieuwe aanvraag indienen; goedkeurders ook.
  *   Weglaten of [] → niemand mag goedkeuren of wijzigen (fail-closed).
  *
  * $mimirApi
@@ -36,7 +36,7 @@ $canWriteToBC = false;
 //     "user@domain.nl",
 // ];
 
-// Alleen deze adressen keuren goed of wijzigen. Leeg = niemand.
+// Alleen deze adressen keuren goed, keuren af of wijzigen. Leeg = niemand.
 // $approvers = [
 //     'goedkeurder@kvt.nl',
 // ];

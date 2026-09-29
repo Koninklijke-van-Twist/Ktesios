@@ -404,11 +404,11 @@ function ktesios_reconcile_requests(array $requests, ?callable $finder = null): 
             $diff = ktesios_bc_diff($request, $customer);
             $request['bcCustomerNo'] = trim((string) ($customer['No'] ?? ''));
             if ($diff === []) {
-                $request['status'] = 'archived';
-                $request['archivedAt'] = gmdate('c');
-                $request['archiveReason'] = 'Klant bestaat in Business Central en komt overeen met de goedgekeurde aanvraag.';
-                $request['bcSync'] = 'matched';
-                $request['bcNote'] = $request['archiveReason'];
+                $request = ktesios_archive_request(
+                    $request,
+                    'Klant bestaat in Business Central en komt overeen met de goedgekeurde aanvraag.',
+                    'matched'
+                );
                 $request['bcDiff'] = [];
                 $archivedIds[] = (string) ($request['id'] ?? '');
             } else {
@@ -575,6 +575,27 @@ function ktesios_bc_write_customer(array $payload, string $requestId = ''): arra
 }
 
 /**
+ * Zelfde afronding als een match in Business Central en als de schrijf-stub:
+ * status archived, tijdstip, reden en bc-notitie. De aanvraag komt daardoor
+ * in het archief en is niet meer goed te keuren.
+ *
+ * @param array<string, mixed> $request
+ * @return array<string, mixed>
+ */
+function ktesios_archive_request(array $request, string $reason, string $bcSync, string $at = ''): array
+{
+    if ($at === '') {
+        $at = gmdate('c');
+    }
+    $request['status'] = 'archived';
+    $request['archivedAt'] = $at;
+    $request['archiveReason'] = $reason;
+    $request['bcSync'] = $bcSync;
+    $request['bcNote'] = $reason;
+    return $request;
+}
+
+/**
  * Goedkeuren.
  * Schrijven uit: status approved + dry-run payload, niet archiveren, write niet aanroepen.
  * Schrijven aan: stub-log en daarna archiveren. Nog steeds geen live POST.
@@ -584,6 +605,15 @@ function ktesios_bc_write_customer(array $payload, string $requestId = ''): arra
  */
 function ktesios_approve_request(array $request, string $actor, string $actorName = ''): array
 {
+    if ((string) ($request['status'] ?? '') === 'archived') {
+        return [
+            'ok' => false,
+            'mode' => '',
+            'error' => 'Een gearchiveerde aanvraag kan niet worden goedgekeurd.',
+            'request' => $request,
+            'result' => [],
+        ];
+    }
     if ((string) ($request['status'] ?? '') !== 'open') {
         return [
             'ok' => false,
@@ -643,11 +673,12 @@ function ktesios_approve_request(array $request, string $actor, string $actorNam
         ];
     }
 
-    $updated['status'] = 'archived';
-    $updated['archivedAt'] = $now;
-    $updated['archiveReason'] = 'Goedgekeurd. Schrijven naar Business Central is als stub gelogd; er is geen live OData-POST gedaan.';
-    $updated['bcSync'] = 'stub-archived';
-    $updated['bcNote'] = $updated['archiveReason'];
+    $updated = ktesios_archive_request(
+        $updated,
+        'Goedgekeurd. Schrijven naar Business Central is als stub gelogd; er is geen live OData-POST gedaan.',
+        'stub-archived',
+        $now
+    );
     $updated['bcWrite'] = [
         'mode' => 'stub',
         'live' => false,
@@ -731,8 +762,66 @@ function ktesios_record_approval_activity(array $request, string $actor, string 
 }
 
 /**
+ * Afkeuren: verplichte reden als activiteitsregel, daarna dezelfde archiefstap
+ * als een match of de schrijf-stub. Alleen een open aanvraag.
+ *
+ * @param array<string, mixed> $request
+ * @return array{ok: bool, error: string, request: array<string, mixed>}
+ */
+function ktesios_reject_request(array $request, string $actor, string $reason, string $actorName = ''): array
+{
+    $unchanged = [
+        'ok' => false,
+        'error' => '',
+        'request' => $request,
+    ];
+    if ((string) ($request['status'] ?? '') === 'archived') {
+        $unchanged['error'] = 'Een gearchiveerde aanvraag kan niet worden afgekeurd.';
+        return $unchanged;
+    }
+    if ((string) ($request['status'] ?? '') !== 'open') {
+        $unchanged['error'] = 'Alleen een open aanvraag kan worden afgekeurd.';
+        return $unchanged;
+    }
+    if (!function_exists('ktesios_describe_rejection') || !function_exists('ktesios_append_message')) {
+        $unchanged['error'] = 'Afkeuren is niet gelukt.';
+        return $unchanged;
+    }
+    $text = ktesios_describe_rejection($reason);
+    if ($text === '') {
+        $unchanged['error'] = 'Vul een reden in om af te keuren.';
+        return $unchanged;
+    }
+    $line = function_exists('ktesios_clip') ? ktesios_clip($reason, 1000, true) : trim($reason);
+    $updated = ktesios_archive_request($request, $line, 'rejected');
+    $updated = ktesios_append_message($updated, $actor, $text, 'system', $actorName);
+    return [
+        'ok' => true,
+        'error' => '',
+        'request' => $updated,
+    ];
+}
+
+/**
+ * De knop Goedkeuren hoort alleen bij een open aanvraag van een goedkeurder.
+ * Na archiveren — afkeuren, een BC-match of de schrijf-stub — blijft hij weg.
+ *
+ * @param array<string, mixed> $request
+ */
+function ktesios_may_approve_request(array $request): bool
+{
+    if ((string) ($request['status'] ?? '') === 'archived') {
+        return false;
+    }
+    if ((string) ($request['status'] ?? '') !== 'open') {
+        return false;
+    }
+    return ktesios_can_approve();
+}
+
+/**
  * Fail-closed: ontbreekt $approvers, is die geen lijst, of staat het adres er
- * niet als string in, dan mag deze gebruiker niet goedkeuren of wijzigen.
+ * niet als string in, dan mag deze gebruiker niet goedkeuren, afkeuren of wijzigen.
  */
 function ktesios_can_approve(): bool
 {
@@ -753,12 +842,12 @@ function ktesios_can_approve(): bool
 
 function ktesios_approver_denied_message(): string
 {
-    return 'Alleen een aangewezen goedkeurder mag een aanvraag goedkeuren of wijzigen.';
+    return 'Alleen een aangewezen goedkeurder mag een aanvraag goedkeuren, afkeuren of wijzigen.';
 }
 
 function ktesios_requester_hint(): string
 {
-    return 'Je kunt een nieuwe aanvraag indienen. Goedkeuren en wijzigen mag alleen een aangewezen goedkeurder.';
+    return 'Je kunt een nieuwe aanvraag indienen. Goedkeuren, afkeuren en wijzigen mag alleen een aangewezen goedkeurder.';
 }
 
 /**
@@ -798,8 +887,8 @@ function ktesios_apply_message_action(array $requests, array $request, array $po
 }
 
 /**
- * POST op de detailpagina. Goedkeuren en wijzigen eisen een goedkeurder én een
- * geldig CSRF-token. Een vrij bericht mag iedereen die de pagina ziet, met CSRF.
+ * POST op de detailpagina. Goedkeuren, afkeuren en wijzigen eisen een goedkeurder
+ * én een geldig CSRF-token. Een vrij bericht mag iedereen die de pagina ziet, met CSRF.
  * De controle gebeurt hier, niet alleen in de HTML.
  *
  * @param list<array<string, mixed>> $requests
@@ -819,7 +908,7 @@ function ktesios_apply_request_action(array $requests, array $request, array $po
     if ($actie === 'bericht') {
         return ktesios_apply_message_action($requests, $request, $post, $csrfOk);
     }
-    if ($actie !== 'goedkeuren' && $actie !== 'wijzigen') {
+    if ($actie !== 'goedkeuren' && $actie !== 'afkeuren' && $actie !== 'wijzigen') {
         $none['error'] = 'Onbekende actie.';
         return $none;
     }
@@ -851,6 +940,27 @@ function ktesios_apply_request_action(array $requests, array $request, array $po
         ];
     }
 
+    if ($actie === 'afkeuren') {
+        if ((string) ($post['bevestig'] ?? '') !== 'ja') {
+            $none['error'] = 'Bevestig de afkeuring in het venster.';
+            $none['rotate'] = true;
+            return $none;
+        }
+        $reason = isset($post['reden']) && is_string($post['reden']) ? $post['reden'] : '';
+        $rejected = ktesios_reject_request($request, ktesios_actor(), $reason, ktesios_actor_name());
+        if ($rejected['ok'] !== true) {
+            $none['error'] = $rejected['error'] !== '' ? $rejected['error'] : 'Afkeuren is niet gelukt.';
+            $none['rotate'] = true;
+            return $none;
+        }
+        return [
+            'saved' => true,
+            'rotate' => true,
+            'error' => '',
+            'requests' => ktesios_replace_request($requests, $rejected['request']),
+        ];
+    }
+
     $edited = ktesios_edit_open_request($request, $post, ktesios_actor(), ktesios_actor_name());
     if ($edited['ok'] !== true) {
         $none['error'] = $edited['error'] !== '' ? $edited['error'] : 'Wijzigen is niet gelukt.';
@@ -873,6 +983,9 @@ function ktesios_status_label(array $request): string
     $status = (string) ($request['status'] ?? '');
     $sync = (string) ($request['bcSync'] ?? '');
     if ($status === 'archived') {
+        if ($sync === 'rejected') {
+            return 'Afgekeurd';
+        }
         return 'Afgerond';
     }
     if ($status === 'approved') {
@@ -895,6 +1008,9 @@ function ktesios_status_pill(array $request): string
     $status = (string) ($request['status'] ?? '');
     $sync = (string) ($request['bcSync'] ?? '');
     if ($status === 'archived') {
+        if ($sync === 'rejected') {
+            return 'rejected';
+        }
         return 'archived';
     }
     if ($status === 'approved' && $sync === 'differs') {

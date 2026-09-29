@@ -120,6 +120,7 @@ table { width: 100%; border-collapse: collapse; background: var(--card); }
 .pill-waiting { background: #fff1d6; color: #8a5a00; }
 .pill-differs, .pill-error { background: #fde8e8; color: #8d1d1d; }
 .pill-archived { background: #e7f6ef; color: var(--ok); }
+.pill-rejected { background: #fde8e8; color: #8d1d1d; }
 
 .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem 1rem; margin: 1rem 0; }
 .fields div { margin: 0; }
@@ -166,6 +167,31 @@ pre {
   background: var(--navy);
   border-color: var(--navy);
   color: #fff;
+}
+
+.btn-danger {
+  background: #8d1d1d;
+  border-color: #8d1d1d;
+  color: #fff;
+}
+
+.reject-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.reject-reason textarea {
+  font: inherit;
+  color: var(--ink);
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  min-height: 5rem;
 }
 
 .btn:focus-visible, a:focus-visible, button:focus-visible {

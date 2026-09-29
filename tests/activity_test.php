@@ -208,6 +208,63 @@ check(strpos($stubText, 'Goedgekeurd en gearchiveerd') !== false, 'stub approval
 check(strpos($stubText, 'Reden:') !== false, 'stub approval includes the archive reason');
 $GLOBALS['canWriteToBC'] = false;
 
+$openReject = sample_request('KA-2026-013', 'open');
+check(ktesios_may_approve_request($openReject) === true, 'an approver may approve an open request');
+$blankReject = ktesios_reject_request($openReject, ktesios_actor(), "  \n", ktesios_actor_name());
+check($blankReject['ok'] === false && ($blankReject['request']['status'] ?? '') === 'open', 'reject without a reason does not archive');
+check(messages_of($blankReject['request']) === [], 'a blank rejection does not post activity');
+$rejected = ktesios_reject_request($openReject, ktesios_actor(), "Niet de juiste klant.\nBel later.", ktesios_actor_name());
+check($rejected['ok'] === true, 'reject with a reason succeeds');
+check(($rejected['request']['status'] ?? '') === 'archived', 'reject archives the request');
+check(($rejected['request']['bcSync'] ?? '') === 'rejected', 'reject uses the archive path and marks the rejection');
+check(($rejected['request']['archiveReason'] ?? '') === 'Niet de juiste klant. Bel later.', 'reject stores the reason on one line');
+check((string) ($rejected['request']['archivedAt'] ?? '') !== '', 'reject sets an archive timestamp');
+$rejectMessages = messages_of($rejected['request']);
+check(count($rejectMessages) === 1 && ($rejectMessages[0]['kind'] ?? '') === 'system', 'reject writes one system line');
+check(($rejectMessages[0]['email'] ?? '') === 'goedkeurder@kvt.nl', 'reject line uses the approver');
+check(($rejectMessages[0]['actor_name'] ?? '') === 'Guus Goedkeurder', 'reject line keeps the display name');
+$rejectText = (string) ($rejectMessages[0]['text'] ?? '');
+check($rejectText === 'Afgekeurd. Reden: Niet de juiste klant. Bel later.', 'reject line explains the reason');
+check(strpos($rejectText, '..') === false, 'reject line does not stack periods');
+check(ktesios_status_label($rejected['request']) === 'Afgekeurd', 'a rejected request is labelled Afgekeurd');
+check(ktesios_may_approve_request($rejected['request']) === false, 'approve is unavailable after reject');
+$approveAfterReject = ktesios_approve_request($rejected['request'], ktesios_actor(), ktesios_actor_name());
+check($approveAfterReject['ok'] === false, 'an afgekeurde aanvraag cannot be approved');
+check(($approveAfterReject['request']['status'] ?? '') === 'archived', 'refused approve leaves the rejection archived');
+$matchedArchive = sample_request('KA-2026-014', 'archived');
+$matchedArchive['bcSync'] = 'matched';
+check(ktesios_may_approve_request($matchedArchive) === false, 'approve is unavailable after archive generally');
+$approveMatched = ktesios_approve_request($matchedArchive, ktesios_actor(), ktesios_actor_name());
+check($approveMatched['ok'] === false && strpos($approveMatched['error'], 'gearchiveerd') !== false, 'any archive blocks a later approval');
+$viaAction = ktesios_apply_request_action(
+    [sample_request('KA-2026-015', 'open')],
+    sample_request('KA-2026-015', 'open'),
+    ['actie' => 'afkeuren', 'bevestig' => 'ja', 'reden' => 'Geen KvK.'],
+    true
+);
+check($viaAction['saved'] === true && ($viaAction['requests'][0]['status'] ?? '') === 'archived', 'approver can reject through the action handler');
+check((string) (messages_of($viaAction['requests'][0])[0]['text'] ?? '') === 'Afgekeurd. Reden: Geen KvK.', 'action handler posts the rejection reason');
+$noToken = ktesios_apply_request_action(
+    [sample_request('KA-2026-016', 'open')],
+    sample_request('KA-2026-016', 'open'),
+    ['actie' => 'afkeuren', 'bevestig' => 'ja', 'reden' => 'Geen KvK'],
+    false
+);
+check($noToken['saved'] === false && ($noToken['requests'][0]['status'] ?? '') === 'open', 'reject without CSRF does not archive');
+check(messages_of($noToken['requests'][0]) === [], 'reject without CSRF does not post activity');
+$_SESSION['user'] = ['email' => 'lezer@kvt.nl', 'name' => 'Lezer Een'];
+$deniedReject = ktesios_apply_request_action(
+    [sample_request('KA-2026-017', 'open')],
+    sample_request('KA-2026-017', 'open'),
+    ['actie' => 'afkeuren', 'bevestig' => 'ja', 'reden' => 'Mag niet'],
+    true
+);
+check($deniedReject['saved'] === false && ($deniedReject['requests'][0]['status'] ?? '') === 'open', 'a viewer cannot reject');
+$_SESSION['user'] = ['email' => 'goedkeurder@kvt.nl', 'name' => 'Guus Goedkeurder'];
+$waiting = sample_request('KA-2026-018', 'approved');
+$rejectWaiting = ktesios_reject_request($waiting, ktesios_actor(), 'Te laat', ktesios_actor_name());
+check($rejectWaiting['ok'] === false && ($rejectWaiting['request']['status'] ?? '') === 'approved', 'only an open request can be rejected');
+
 $_SESSION['user'] = ['email' => 'kijker@kvt.nl', 'display_name' => 'Kim Kijker'];
 $GLOBALS['ktesios_bc_customers_path'] = __DIR__ . '/../web/fixtures/bc_customers.json';
 $seed = json_decode((string) file_get_contents(__DIR__ . '/fixtures/requests_seed.json'), true);
@@ -336,7 +393,8 @@ check(strpos($html, 'name="csrf"') !== false, 'compose posts the CSRF token');
 check(strpos($html, 'maxlength="2000"') !== false, 'compose limits the textarea');
 check(strpos($html, 'ktesios-message--system') !== false, 'system lines get the italic marker class');
 check(strpos($html, 'Lezer Een') !== false, 'the author chip prefers the display name');
-check(strpos($html, '29-09-2026 12:00') !== false, 'timestamp is shown in Amsterdam time');
+check(strpos($html, '29 september 2026, 12:00') !== false, 'timestamp is shown in Dutch Amsterdam time');
+check(strpos($html, '2026-09-29T10:00:00Z') === false, 'activity feed does not show the raw ISO timestamp');
 check(strpos($html, '<script>alert(1)</script>') === false, 'message text is not raw HTML');
 check(strpos($html, '&lt;script&gt;alert(1)&lt;/script&gt;') !== false, 'message text is escaped');
 if (function_exists('imagecreatetruecolor')) {
@@ -351,6 +409,55 @@ check(strpos($newPage, 'ktesios_actor_name()') !== false, 'a new request records
 $css = (string) file_get_contents(__DIR__ . '/../web/assets/app.css');
 check(strpos($css, '.ktesios-message-row') !== false && strpos($css, '.ktesios-user-avatar') !== false, 'chat styles use the ktesios prefix');
 check(strpos($css, '.ktesios-message--system .ktesios-message-system-text') !== false, 'system text is marked italic in CSS');
+
+check(ktesios_format_displayed_when('2026-09-29T11:57:42+00:00') === '29 september 2026, 13:57', 'offset ISO becomes a Dutch datetime in Amsterdam');
+check(ktesios_format_displayed_when('2026-09-29T13:50:00Z') === '29 september 2026, 15:50', 'summer UTC becomes CEST');
+check(ktesios_format_displayed_when('2026-01-15T14:50:00+00:00') === '15 januari 2026, 15:50', 'winter UTC becomes CET');
+check(ktesios_format_displayed_when('2026-09-29') === '29 september 2026', 'date only is a Dutch date');
+check(ktesios_format_displayed_when('2026-01-01') === '1 januari 2026', 'a date-only value does not shift to the previous day');
+check(ktesios_format_displayed_when('15:50') === '15:50', 'time only stays HH:mm');
+check(ktesios_format_displayed_when('09:05:33') === '09:05', 'time with seconds drops the seconds');
+check(ktesios_format_displayed_when('2026-13-40T00:00:00Z') === '', 'an impossible timestamp is not shown as ISO');
+check(ktesios_format_activity_time('2026-09-29T10:00:00Z') === '29 september 2026, 12:00', 'activity helper uses the Dutch datetime format');
+
+$metaRequest = sample_request('KA-2026-010', 'approved');
+$metaRequest['createdAt'] = '2026-09-29T11:57:42+00:00';
+$metaRequest['approvedAt'] = '2026-09-29T13:50:00Z';
+$metaRequest['approvedBy'] = 'goedkeurder@kvt.nl';
+$metaRequest['archivedAt'] = '2026-01-15T14:50:00+00:00';
+ob_start();
+ktesios_render_request_meta($metaRequest);
+$metaHtml = (string) ob_get_clean();
+check(strpos($metaHtml, '29 september 2026, 13:57') !== false, 'detail meta formats the created timestamp');
+check(strpos($metaHtml, '29 september 2026, 15:50 goedkeurder@kvt.nl') !== false, 'detail meta formats approval time and keeps the approver');
+check(strpos($metaHtml, '15 januari 2026, 15:50') !== false, 'detail meta formats the archive timestamp');
+check(strpos($metaHtml, '2026-09-29T') === false, 'detail meta does not show raw ISO');
+ob_start();
+ktesios_render_request_table([$metaRequest], 'leeg');
+$tableHtml = (string) ob_get_clean();
+check(strpos($tableHtml, '29 september 2026, 13:57') !== false, 'request list shows a Dutch created timestamp');
+check(strpos($tableHtml, '2026-09-29T') === false, 'request list does not show raw ISO');
+
+$GLOBALS['approvers'] = ['goedkeurder@kvt.nl'];
+$_SESSION['user'] = ['email' => 'goedkeurder@kvt.nl', 'name' => 'Guus Goedkeurder'];
+ob_start();
+ktesios_render_decision_actions(sample_request('KA-2026-010', 'open'));
+$decisionHtml = (string) ob_get_clean();
+check(strpos($decisionHtml, '>Goedkeuren<') !== false, 'open request shows Goedkeuren');
+check(strpos($decisionHtml, '>Afkeuren<') !== false, 'open request shows Afkeuren');
+check(strpos($decisionHtml, 'name="reden"') !== false && strpos($decisionHtml, 'required') !== false, 'reject form requires a reason');
+check(strpos($decisionHtml, 'name="actie" value="afkeuren"') !== false, 'reject form posts afkeuren');
+check(strpos($decisionHtml, 'name="csrf"') !== false, 'reject form posts the CSRF token');
+$archivedUi = sample_request('KA-2026-010', 'archived');
+$archivedUi['bcSync'] = 'matched';
+ob_start();
+ktesios_render_decision_actions($archivedUi);
+check((string) ob_get_clean() === '', 'approve and reject are not rendered after archive');
+$rejectedUi = sample_request('KA-2026-010', 'archived');
+$rejectedUi['bcSync'] = 'rejected';
+ob_start();
+ktesios_render_decision_actions($rejectedUi);
+check((string) ob_get_clean() === '', 'approve and reject are not rendered after reject');
 
 if ($failures > 0) {
     fwrite(STDERR, "{$failures} failed\n");

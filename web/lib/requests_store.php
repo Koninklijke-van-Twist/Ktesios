@@ -677,6 +677,15 @@ function ktesios_describe_approval(array $request): string
     return ktesios_activity_sentence($parts);
 }
 
+function ktesios_describe_rejection(string $reason): string
+{
+    $reason = ktesios_clip($reason, 1000, true);
+    if ($reason === '') {
+        return '';
+    }
+    return ktesios_activity_sentence(['Afgekeurd', 'Reden: ' . $reason]);
+}
+
 /**
  * @param array<string, string> $before
  * @param array<string, mixed> $after

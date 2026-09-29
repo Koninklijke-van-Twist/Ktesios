@@ -25,6 +25,8 @@ try {
         $postError = '';
         $redirect = '';
         $draftText = '';
+        $draftReason = '';
+        $rejectError = false;
         if ($request !== null && (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST')) {
             $postedCsrf = isset($_POST['csrf']) && is_string($_POST['csrf']) ? $_POST['csrf'] : '';
             $csrfOk = ktesios_csrf_valid($postedCsrf);
@@ -34,8 +36,13 @@ try {
             }
             if ($outcome['error'] !== '') {
                 $postError = $outcome['error'];
-                if ((string) ($_POST['actie'] ?? '') === 'bericht' && isset($_POST['text']) && is_string($_POST['text'])) {
+                $actie = (string) ($_POST['actie'] ?? '');
+                if ($actie === 'bericht' && isset($_POST['text']) && is_string($_POST['text'])) {
                     $draftText = $_POST['text'];
+                }
+                if ($actie === 'afkeuren' && isset($_POST['reden']) && is_string($_POST['reden'])) {
+                    $draftReason = $_POST['reden'];
+                    $rejectError = true;
                 }
             } elseif ($outcome['saved'] === true) {
                 ktesios_save_requests($outcome['requests']);
@@ -47,6 +54,8 @@ try {
             'postError' => $postError,
             'redirect' => $redirect,
             'draftText' => $draftText,
+            'draftReason' => $draftReason,
+            'rejectError' => $rejectError,
         ];
     });
 } catch (Throwable $error) {
@@ -65,6 +74,8 @@ if ($handled['redirect'] !== '') {
 $request = $handled['request'];
 $postError = $handled['postError'];
 $draftText = (string) ($handled['draftText'] ?? '');
+$draftReason = (string) ($handled['draftReason'] ?? '');
+$rejectError = ($handled['rejectError'] ?? false) === true;
 if (!is_array($request)) {
     http_response_code(404);
     ktesios_page_open('Aanvraag');
@@ -74,9 +85,11 @@ if (!is_array($request)) {
 }
 
 $step = (string) ($_GET['stap'] ?? '');
-$isOpen = (string) ($request['status'] ?? '') === 'open';
 $mayChange = ktesios_can_approve();
-$confirming = $isOpen && $mayChange && $step === 'bevestigen';
+$mayDecide = ktesios_may_approve_request($request);
+$confirming = $mayDecide && $step === 'bevestigen';
+$rejecting = $mayDecide && $step === 'afkeuren';
+$showRejectPanel = $rejecting || ($rejectError && $mayDecide);
 
 ktesios_page_open($id . ' — Ktesios');
 echo '<p class="hint"><a href="index.php">← Aanvragen</a></p>';
@@ -109,7 +122,15 @@ if ($confirming) {
     echo '</section>';
 }
 
-if ($isOpen && $mayChange && !$confirming) {
+if ($showRejectPanel) {
+    echo '<section class="panel">';
+    echo '<h2>Klantaanvraag afkeuren?</h2>';
+    echo '<p>' . h(ktesios_reject_copy()) . '</p>';
+    ktesios_render_reject_form($request, $draftReason, 'reject-reason-panel');
+    echo '</section>';
+}
+
+if ($mayDecide && !$confirming && !$rejecting) {
     echo '<section class="panel">';
     echo '<h2>Gegevens wijzigen</h2>';
     ktesios_render_request_form($request, 'request.php?id=' . rawurlencode($id), 'wijzigen', 'Wijzigingen opslaan');
@@ -118,23 +139,7 @@ if ($isOpen && $mayChange && !$confirming) {
     ktesios_render_customer_fields($request);
 }
 
-$meta = [
-    'Aangemaakt' => (string) ($request['createdAt'] ?? ''),
-    'Ingediend door' => (string) ($request['createdBy'] ?? ''),
-    'Goedgekeurd' => trim((string) ($request['approvedAt'] ?? '') . ' ' . (string) ($request['approvedBy'] ?? '')),
-    'Afgerond' => (string) ($request['archivedAt'] ?? ''),
-    'Reden archief' => (string) ($request['archiveReason'] ?? ''),
-    'BC-klantnummer' => (string) ($request['bcCustomerNo'] ?? ''),
-];
-echo '<dl class="fields meta">';
-foreach ($meta as $label => $value) {
-    $value = trim($value);
-    if ($value === '') {
-        continue;
-    }
-    echo '<div><dt>' . h($label) . '</dt><dd>' . h($value) . '</dd></div>';
-}
-echo '</dl>';
+ktesios_render_request_meta($request);
 
 $diff = isset($request['bcDiff']) && is_array($request['bcDiff']) ? $request['bcDiff'] : [];
 if ($diff !== [] && (string) ($request['bcSync'] ?? '') === 'differs') {
@@ -172,56 +177,8 @@ if ((string) ($request['bcSync'] ?? '') === 'stub-archived' && $payload !== []) 
     );
 }
 
-if ($isOpen && $mayChange && !$confirming) {
-    echo '<div class="actions">';
-    echo '<button class="btn btn-primary" type="button" id="open-approve">Goedkeuren</button>';
-    echo '</div>';
-    echo '<noscript><p><a class="btn btn-primary" href="request.php?id=' . h(rawurlencode($id)) . '&amp;stap=bevestigen">Goedkeuren (bevestigen)</a></p></noscript>';
-    echo '<div class="modal" id="approve-modal" hidden>';
-    echo '<div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="approve-title">';
-    echo '<h2 id="approve-title">Klantaanvraag goedkeuren?</h2>';
-    echo '<p>' . h(ktesios_confirm_copy()) . '</p>';
-    ktesios_render_confirm_form($request);
-    echo '</div></div>';
-    echo <<<'JS'
-<script>
-(function () {
-  var openBtn = document.getElementById('open-approve');
-  var modal = document.getElementById('approve-modal');
-  if (!openBtn || !modal) {
-    return;
-  }
-  function openModal() {
-    modal.hidden = false;
-    var primary = modal.querySelector('.btn-primary');
-    if (primary) {
-      primary.focus();
-    }
-  }
-  function closeModal() {
-    modal.hidden = true;
-    openBtn.focus();
-  }
-  openBtn.addEventListener('click', openModal);
-  modal.addEventListener('click', function (event) {
-    if (event.target === modal) {
-      closeModal();
-    }
-  });
-  var links = modal.querySelectorAll('a');
-  for (var i = 0; i < links.length; i++) {
-    links[i].addEventListener('click', function () {
-      modal.hidden = true;
-    });
-  }
-  document.addEventListener('keydown', function (event) {
-    if (event.key === 'Escape' && !modal.hidden) {
-      closeModal();
-    }
-  });
-})();
-</script>
-JS;
+if ($mayDecide && !$confirming && !$rejecting) {
+    ktesios_render_decision_actions($request, $draftReason);
 }
 
 ktesios_render_activity($request, $draftText);
