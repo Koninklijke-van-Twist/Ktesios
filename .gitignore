@@ -1,0 +1,15 @@
+# Serverconfig met sleutels. Nooit committen.
+web/auth.php
+
+# Schrijfbare runtime (FTP-deploy laat deze mappen op de server staan).
+web/cache/
+web/data/*
+!web/data/.gitkeep
+
+# OS-rommel
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+*~
+*.swp

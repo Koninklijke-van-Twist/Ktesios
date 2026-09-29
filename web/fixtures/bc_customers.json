@@ -1,0 +1,26 @@
+[
+  {
+    "No": "K00042",
+    "Name": "De Groot Installaties B.V.",
+    "Address": "Industrieweg 12",
+    "Post_Code": "1234 AB",
+    "City": "Utrecht",
+    "Country_Region_Code": "NL",
+    "Phone_No": "030-1234567",
+    "E_Mail": "info@degroot-installaties.example",
+    "VAT_Registration_No": "NL123456789B01",
+    "Contact": "A. de Groot"
+  },
+  {
+    "No": "K00077",
+    "Name": "Van Dijk Techniek B.V.",
+    "Address": "Havenkade 4",
+    "Post_Code": "3011 AA",
+    "City": "Rotterdam",
+    "Country_Region_Code": "NL",
+    "Phone_No": "010-7654321",
+    "E_Mail": "oud@vandijk.example",
+    "VAT_Registration_No": "NL999888777B01",
+    "Contact": "B. van Dijk"
+  }
+]

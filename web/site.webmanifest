@@ -1,0 +1,17 @@
+{
+    "id": "./index.php",
+    "name": "Ktesios",
+    "short_name": "Ktesios",
+    "start_url": "./index.php",
+    "scope": "./",
+    "display": "standalone",
+    "theme_color": "#12344d",
+    "background_color": "#f4f6f8",
+    "icons": [
+        {
+            "src": "thumbnail.png",
+            "sizes": "1448x1086",
+            "type": "image/png"
+        }
+    ]
+}

@@ -1,0 +1,10 @@
+<h3>Klantaanvraag-portaal</h3>
+Ktesios is het interne portaal voor nieuwe B2B-klanten op sleutels.kvt.nl.
+Open aanvragen keur je goed na een bevestiging. Zolang $canWriteToBC niet
+true is, wordt er niets in Business Central aangemaakt of gewijzigd; je ziet
+de payload die anders geschreven zou worden. Goedgekeurde aanvragen die nog
+niet afgerond zijn, worden bij het openen van het overzicht read-only
+vergeleken met Business Central (Mímir als $mimirApi gezet is, anders
+sample-data). Komt de klant overeen, dan gaat de aanvraag naar het archief.
+Wijkt Business Central af, dan blijft een waarschuwing staan en wordt er
+niets overschreven.
