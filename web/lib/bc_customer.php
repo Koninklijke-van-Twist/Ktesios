@@ -10,21 +10,27 @@ require_once __DIR__ . '/mimir_client.php';
  * Schrijven mag alleen als $canWriteToBC === true (boolean). Ook dan doet dit
  * skelet geen live OData-POST. De bedoelde aanroep, voor Ariadne later:
  *
- *   POST {baseUrl}Company('Koninklijke van Twist')/Customer
+ *   POST {baseUrl}Company('Koninklijke van Twist')/AppCustomerCard
  *   Content-Type: application/json
  *   Authorization: service-account uit $auth (basic), niet in git
  *
- *   Velden (placeholder, pagina/naam door Ariadne te bevestigen):
+ *   Velden zoals op AppCustomerCard (zelfde namen als Mercurius/AM-Hub):
  *     Name, Address, Post_Code, City, Country_Region_Code,
- *     Phone_No, E_Mail, VAT_Registration_No, Contact
+ *     Phone_No, E_Mail, VAT_Registration_No, ContactName,
+ *     KVT_Chamber_Of_Commerce_No
  *
- *   KvK-nummer blijft lokaal tot er een BC-veld voor is. Geen PATCH/merge in
- *   dit skelet: een afwijkende bestaande klant wordt nooit stil overschreven.
+ *   Geen PATCH/merge in dit skelet: een afwijkende bestaande klant wordt
+ *   niet stil overschreven.
  *
- * Lezen: Mímir-tabel Customer wanneer $mimirApi gezet is, anders
+ * Lezen: Mímir-tabel AppCustomerCard wanneer $mimirApi gezet is, anders
  * web/fixtures/bc_customers.json. Een Mímir-fout valt niet terug op de fixture,
  * zodat een storing geen "klant bestaat niet" of een vals archief wordt.
  */
+
+function ktesios_bc_customer_entity(): string
+{
+    return 'AppCustomerCard';
+}
 
 function ktesios_can_write_to_bc(): bool
 {
@@ -53,7 +59,8 @@ function ktesios_compare_fields(): array
         ['bc' => 'Phone_No', 'local' => 'phone', 'label' => 'Telefoon', 'kind' => 'phone'],
         ['bc' => 'E_Mail', 'local' => 'email', 'label' => 'E-mail', 'kind' => 'lower'],
         ['bc' => 'VAT_Registration_No', 'local' => 'vat', 'label' => 'BTW-nummer', 'kind' => 'vat'],
-        ['bc' => 'Contact', 'local' => 'contact', 'label' => 'Contactpersoon', 'kind' => 'text'],
+        ['bc' => 'ContactName', 'local' => 'contact', 'label' => 'Contactpersoon', 'kind' => 'text'],
+        ['bc' => 'KVT_Chamber_Of_Commerce_No', 'local' => 'kvk', 'label' => 'KvK-nummer', 'kind' => 'kvk'],
     ];
 }
 
@@ -102,6 +109,8 @@ function ktesios_norm_field(string $value, string $kind): string
             return ktesios_norm_phone($value);
         case 'vat':
             return ktesios_norm_vat($value);
+        case 'kvk':
+            return ktesios_norm_phone($value);
         case 'upper':
             return strtoupper(trim($value));
         case 'lower':
@@ -252,7 +261,8 @@ function ktesios_customer_select(): array
         'Phone_No',
         'E_Mail',
         'VAT_Registration_No',
-        'Contact',
+        'ContactName',
+        'KVT_Chamber_Of_Commerce_No',
     ];
 }
 
@@ -265,7 +275,7 @@ function ktesios_mimir_customer_rows(array $request): array
     $keys = ktesios_lookup_keys($request);
     $select = ktesios_customer_select();
     if ($keys['no'] !== '') {
-        $byNo = ktesios_mimir_query('Customer', ktesios_odata_eq('No', $keys['no']), $select, 60);
+        $byNo = ktesios_mimir_query(ktesios_bc_customer_entity(), ktesios_odata_eq('No', $keys['no']), $select, 60);
         if ($byNo !== []) {
             return $byNo;
         }
@@ -277,7 +287,7 @@ function ktesios_mimir_customer_rows(array $request): array
             $vatFilter = $compact;
         }
         return ktesios_mimir_query(
-            'Customer',
+            ktesios_bc_customer_entity(),
             ktesios_odata_eq('VAT_Registration_No', $vatFilter),
             $select,
             60
@@ -430,7 +440,7 @@ function ktesios_reconcile_requests(array $requests, ?callable $finder = null): 
 }
 
 /**
- * Payload die een latere Customer-insert zou meesturen. Nog geen HTTP.
+ * Payload die een latere AppCustomerCard-insert zou meesturen. Nog geen HTTP.
  *
  * @param array<string, mixed> $request
  * @return array<string, mixed>
@@ -444,11 +454,10 @@ function ktesios_bc_customer_payload(array $request): array
     }
 
     return [
-        'entity' => 'Customer',
+        'entity' => ktesios_bc_customer_entity(),
         'company' => ktesios_company_name(),
         'operation' => 'insert',
         'requestId' => (string) ($request['id'] ?? ''),
-        'kvkNotMapped' => (string) ($customer['kvk'] ?? ''),
         'fields' => [
             'Name' => (string) ($customer['name'] ?? ''),
             'Address' => (string) ($customer['address'] ?? ''),
@@ -458,7 +467,8 @@ function ktesios_bc_customer_payload(array $request): array
             'Phone_No' => (string) ($customer['phone'] ?? ''),
             'E_Mail' => (string) ($customer['email'] ?? ''),
             'VAT_Registration_No' => (string) ($customer['vat'] ?? ''),
-            'Contact' => (string) ($customer['contact'] ?? ''),
+            'ContactName' => (string) ($customer['contact'] ?? ''),
+            'KVT_Chamber_Of_Commerce_No' => (string) ($customer['kvk'] ?? ''),
         ],
     ];
 }
@@ -483,8 +493,8 @@ function ktesios_bc_intended_request(array $payload): array
 
     return [
         'method' => 'POST',
-        'url' => $base . "/Company('" . $company . "')/Customer",
-        'entity' => 'Customer',
+        'url' => $base . "/Company('" . $company . "')/" . ktesios_bc_customer_entity(),
+        'entity' => ktesios_bc_customer_entity(),
         'headers' => [
             'Content-Type: application/json',
             'If-Match: *',
@@ -549,7 +559,7 @@ function ktesios_bc_write_customer(array $payload, string $requestId = ''): arra
         'mode' => 'stub',
         'live' => false,
         'requestId' => $requestId !== '' ? $requestId : (string) ($payload['requestId'] ?? ''),
-        'reason' => 'OData POST naar Customer is in dit skelet niet geactiveerd. Alleen een dry-run log.',
+        'reason' => 'OData POST naar AppCustomerCard is in dit skelet niet geactiveerd. Alleen een dry-run log.',
         'payload' => $payload,
         'intended' => ktesios_bc_intended_request($payload),
     ];

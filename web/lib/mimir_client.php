@@ -6,7 +6,7 @@ declare(strict_types=1);
  * Read-only Mímir-client voor Ktesios.
  *
  * Zelfde aanroep als Vulcanus: POST {base}/query.php met company, table, filter.
- * Alleen de Customer-read gebruikt dit. Er is geen schrijfpad via Mímir.
+ * Alleen de AppCustomerCard-read gebruikt dit. Er is geen schrijfpad via Mímir.
  *
  * Optioneel in auth.php:
  *   $mimirBase    = 'https://sleutels.kvt.nl/mimir/api';

@@ -145,7 +145,7 @@ $payload = isset($request['dryRunPayload']) && is_array($request['dryRunPayload'
 if ($payload !== [] && (string) ($request['status'] ?? '') === 'approved') {
     ktesios_render_payload_panel(
         'Voorbeeld — niet geschreven naar Business Central',
-        'Schrijven staat uit. Dit is de payload die een latere Customer-insert zou meesturen.',
+        'Schrijven staat uit. Dit is de payload die een latere AppCustomerCard-insert zou meesturen.',
         $payload,
         'panel-dry'
     );

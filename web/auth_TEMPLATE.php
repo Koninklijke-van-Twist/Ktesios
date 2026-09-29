@@ -8,7 +8,7 @@
  *   nooit een klant aangemaakt of gewijzigd. Het goedkeuringsscherm toont dan
  *   de payload die anders geschreven zou worden.
  *   Ook mét true doet dit skelet geen live OData-POST. Dat blijft een stub
- *   tot Ariadne de Customer-write invult.
+ *   tot Ariadne de AppCustomerCard-write invult.
  *
  * $allowedUsers
  *   weglaten of []  → elke geldige Entra-login heeft toegang

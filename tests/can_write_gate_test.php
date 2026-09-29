@@ -122,7 +122,9 @@ check(strpos($workflow, 'TLS uit:') !== false, 'workflow notes that TLS-off matc
 $bcSource = (string) file_get_contents(__DIR__ . '/../web/lib/bc_customer.php');
 check(strpos($bcSource, 'curl_exec') === false, 'write module does not call curl_exec');
 check(strpos($bcSource, 'curl_init') === false, 'write module does not open a curl handle');
-check(strpos($bcSource, "entity' => 'Customer'") !== false || strpos($bcSource, "'entity' => 'Customer'") !== false, 'intended entity is Customer');
+check(ktesios_bc_customer_entity() === 'AppCustomerCard', 'BC entity is AppCustomerCard');
+check(strpos($bcSource, "return 'AppCustomerCard';") !== false, 'source names AppCustomerCard');
+check(strpos($bcSource, "'entity' => 'Customer'") === false && strpos($bcSource, '/Customer') === false, 'source does not target the Customer entity');
 
 $login = (string) file_get_contents(__DIR__ . '/../web/logincheck.php');
 check(strpos($login, "/../login/lib.php") !== false, 'logincheck uses the shared Login app');
@@ -150,11 +152,12 @@ check(($dry['request']['status'] ?? '') === 'approved', 'dry-run approval stays 
 check(($dry['request']['status'] ?? '') !== 'archived', 'dry-run approval does not archive');
 check(($dry['request']['bcSync'] ?? '') === 'dry-run', 'dry-run marks bcSync');
 $payload = $dry['result']['payload'] ?? [];
-check(is_array($payload) && (($payload['entity'] ?? '') === 'Customer'), 'dry-run payload names Customer');
+check(is_array($payload) && (($payload['entity'] ?? '') === 'AppCustomerCard'), 'dry-run payload names AppCustomerCard');
 check((($payload['fields']['Name'] ?? '') === 'Smit & Zonen B.V.'), 'dry-run payload keeps the company name');
 check((($payload['fields']['VAT_Registration_No'] ?? '') === 'NL111222333B01'), 'dry-run payload keeps the VAT number');
-check((($payload['kvkNotMapped'] ?? '') === '30222111'), 'KvK stays outside the BC field list');
-check(!isset($payload['fields']['kvk']) && !isset($payload['fields']['Kvk']), 'KvK is not sent as a BC field');
+check((($payload['fields']['ContactName'] ?? '') === 'C. Smit'), 'contact uses ContactName');
+check((($payload['fields']['KVT_Chamber_Of_Commerce_No'] ?? '') === '30222111'), 'KvK uses KVT_Chamber_Of_Commerce_No');
+check(!isset($payload['fields']['Contact']) && !isset($payload['kvkNotMapped']), 'payload does not use the Customer Contact field');
 check(is_file($GLOBALS['ktesios_bc_write_log_path']) === false, 'dry-run approval does not write the BC log');
 check((int) ($GLOBALS['ktesios_bc_write_invocations'] ?? 0) === 0, 'dry-run approval does not call the stub writer');
 
@@ -188,7 +191,7 @@ check(strpos($log, 'curl_') === false, 'log is not an HTTP transcript');
 
 $intended = ktesios_bc_intended_request($stub['result']['payload']);
 check(($intended['method'] ?? '') === 'POST', 'intended call is POST');
-check(strpos((string) ($intended['url'] ?? ''), "/Company('Koninklijke van Twist')/Customer") !== false, 'intended URL targets Customer');
+check(strpos((string) ($intended['url'] ?? ''), "/Company('Koninklijke van Twist')/AppCustomerCard") !== false, 'intended URL targets AppCustomerCard');
 check(strpos((string) ($intended['todo'] ?? ''), 'Ariadne') !== false, 'intended call is marked for Ariadne');
 
 reset_state();
@@ -271,7 +274,7 @@ ktesios_mimir_set_transport(static function (string $url, array $options) use (&
     if (!is_array($body)) {
         $body = [];
     }
-    if (($body['table'] ?? '') !== 'Customer') {
+    if (($body['table'] ?? '') !== 'AppCustomerCard') {
         return ['code' => 500, 'raw' => '{"error":"unexpected table"}'];
     }
     if (($body['filter'] ?? '') !== "VAT_Registration_No eq 'NL123456789B01'") {
@@ -287,7 +290,8 @@ ktesios_mimir_set_transport(static function (string $url, array $options) use (&
         'Phone_No' => '030-1234567',
         'E_Mail' => 'info@degroot-installaties.example',
         'VAT_Registration_No' => 'NL123456789B01',
-        'Contact' => 'A. de Groot',
+        'ContactName' => 'A. de Groot',
+        'KVT_Chamber_Of_Commerce_No' => '30222111',
     ];
     return ['code' => 200, 'raw' => (string) json_encode(['value' => [$row]])];
 });
@@ -305,7 +309,7 @@ $live = ktesios_bc_find_customer($liveMatch);
 check(($live['source'] ?? '') === 'mimir', 'configured Mímir is the read source');
 check(($live['found'] ?? false) === true, 'Mímir row is found');
 check(strpos((string) ($optionsProbe ?? ''), 'fixtures') === false, 'finder result is not the fixture path');
-check($mimirCalls === 1, 'VAT lookup is a single Customer query');
+check($mimirCalls === 1, 'VAT lookup is a single AppCustomerCard query');
 
 $probe = null;
 ktesios_mimir_set_transport(static function (string $url, array $options) use (&$probe): array {

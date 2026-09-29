@@ -68,7 +68,7 @@ function ktesios_render_setup_page(): void
     ktesios_page_open('Ktesios instellen');
     echo '<h1>Auth ontbreekt</h1>';
     echo '<p>Kopieer <code>web/auth_TEMPLATE.php</code> naar <code>web/auth.php</code>. Dat bestand staat in <code>.gitignore</code> en hoort niet in git.</p>';
-    echo '<p>Laat <code>$canWriteToBC = false</code> staan tot Ariadne de Customer-write heeft ingevuld. Zonder <code>$mimirApi</code> gebruikt het overzicht de sample-fixtures.</p>';
+    echo '<p>Laat <code>$canWriteToBC = false</code> staan tot Ariadne de AppCustomerCard-write heeft ingevuld. Zonder <code>$mimirApi</code> gebruikt het overzicht de sample-fixtures.</p>';
     ktesios_page_close();
 }
 
