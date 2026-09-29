@@ -40,9 +40,13 @@ if ($request === null) {
 $postError = '';
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     $confirmed = (string) ($_POST['actie'] ?? '') === 'goedkeuren' && (string) ($_POST['bevestig'] ?? '') === 'ja';
+    $postedCsrf = isset($_POST['csrf']) && is_string($_POST['csrf']) ? $_POST['csrf'] : '';
     if (!$confirmed) {
         $postError = 'Bevestig de goedkeuring in het venster.';
+    } elseif (!ktesios_csrf_valid($postedCsrf)) {
+        $postError = 'Deze goedkeuring hoort niet bij je sessie. Laad de pagina opnieuw.';
     } else {
+        ktesios_csrf_rotate();
         $decision = ktesios_approve_request($request, ktesios_actor());
         if ($decision['ok'] !== true) {
             $postError = $decision['error'] !== '' ? $decision['error'] : 'Goedkeuren is niet gelukt.';

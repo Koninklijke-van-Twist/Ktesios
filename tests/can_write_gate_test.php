@@ -352,6 +352,14 @@ $requestPage = (string) file_get_contents(__DIR__ . '/../web/request.php');
 check(strpos($requestPage, 'approve-modal') !== false, 'detail page has a confirmation modal');
 check(strpos($requestPage, 'stap=bevestigen') !== false, 'detail page has a no-js confirmation step');
 check(strpos($requestPage, 'bevestig') !== false, 'approval requires the confirmation field');
+$csrfPos = strpos($requestPage, 'ktesios_csrf_valid');
+$approvePos = strpos($requestPage, 'ktesios_approve_request');
+check($csrfPos !== false && $approvePos !== false && $csrfPos < $approvePos, 'CSRF is checked before approve');
+$layout = (string) file_get_contents(__DIR__ . '/../web/lib/layout.php');
+check(strpos($layout, 'name="csrf"') !== false, 'confirm form posts the CSRF token');
+$storeSource = (string) file_get_contents(__DIR__ . '/../web/lib/requests_store.php');
+check(strpos($storeSource, "\$path . '.tmp'") === false, 'save does not use one shared temp path');
+check(strpos($storeSource, 'tempnam(') !== false, 'save uses a unique tempnam per writer');
 
 $phpFiles = [
     'web/index.php',
@@ -365,6 +373,7 @@ $phpFiles = [
     'web/lib/layout.php',
     'web/lib/bootstrap.php',
     'web/lib/html.php',
+    'web/lib/csrf.php',
 ];
 foreach ($phpFiles as $relative) {
     $source = (string) file_get_contents(__DIR__ . '/../' . $relative);
@@ -376,28 +385,50 @@ foreach ($phpFiles as $relative) {
     }
 }
 
-$authPath = __DIR__ . '/../web/auth.php';
-$authBackup = is_file($authPath) ? file_get_contents($authPath) : null;
+$realAuthPath = __DIR__ . '/../web/auth.php';
+$realAuthBefore = is_file($realAuthPath) ? file_get_contents($realAuthPath) : null;
+$scopeWeb = $tmp . '/scope-app/web';
+if (!mkdir($scopeWeb . '/lib', 0775, true) && !is_dir($scopeWeb . '/lib')) {
+    fwrite(STDERR, "cannot create scope app tree\n");
+    exit(1);
+}
+copy(__DIR__ . '/../web/logincheck.php', $scopeWeb . '/logincheck.php');
+foreach (glob(__DIR__ . '/../web/lib/*.php') ?: [] as $libFile) {
+    copy($libFile, $scopeWeb . '/lib/' . basename($libFile));
+}
+file_put_contents($scopeWeb . '/auth.php', "<?php\n\$canWriteToBC = true;\n\$mimirApi = 'mimir_scope_test';\n");
 $runner = $tmp . '/scope-runner.php';
-$bootstrapPath = __DIR__ . '/../web/lib/bootstrap.php';
-file_put_contents($authPath, "<?php\n\$canWriteToBC = true;\n\$mimirApi = 'mimir_scope_test';\n");
 file_put_contents(
     $runner,
-    "<?php\n\$_SERVER['REMOTE_ADDR'] = '127.0.0.1';\nrequire " . var_export($bootstrapPath, true) . ";\n"
+    "<?php\n\$_SERVER['REMOTE_ADDR'] = '127.0.0.1';\nrequire " . var_export($scopeWeb . '/lib/bootstrap.php', true) . ";\n"
     . "echo ktesios_can_write_to_bc() ? \"write-yes\\n\" : \"write-no\\n\";\n"
     . "echo ktesios_mimir_enabled() ? \"mimir-yes\\n\" : \"mimir-no\\n\";\n"
 );
 $scopeOut = shell_exec('php ' . escapeshellarg($runner) . ' 2>&1');
-if ($authBackup === null) {
-    @unlink($authPath);
-} else {
-    file_put_contents($authPath, $authBackup);
-}
-check(is_string($scopeOut) && strpos($scopeOut, 'write-yes') !== false, 'auth.php write flag stays global after bootstrap');
-check(is_string($scopeOut) && strpos($scopeOut, 'mimir-yes') !== false, 'auth.php Mímir key stays global after bootstrap');
+$realAuthAfter = is_file($realAuthPath) ? file_get_contents($realAuthPath) : null;
+check($realAuthBefore === $realAuthAfter, 'scope test does not write web/auth.php');
+check(is_file($scopeWeb . '/auth.php'), 'scope test writes only its temporary auth.php');
+check(is_string($scopeOut) && strpos($scopeOut, 'write-yes') !== false, 'temporary auth.php write flag stays global after bootstrap');
+check(is_string($scopeOut) && strpos($scopeOut, 'mimir-yes') !== false, 'temporary auth.php Mímir key stays global after bootstrap');
 if (!is_string($scopeOut) || strpos($scopeOut, 'write-yes') === false) {
     fwrite(STDERR, "scope runner output:\n" . (string) $scopeOut . "\n");
 }
+
+ini_set('session.use_cookies', '0');
+ini_set('session.use_only_cookies', '1');
+ini_set('session.cache_limiter', '');
+session_save_path($tmp);
+require_once __DIR__ . '/../web/lib/csrf.php';
+$csrf = ktesios_csrf_token();
+check(preg_match('/\A[a-f0-9]{64}\z/', $csrf) === 1, 'CSRF token is 32 random bytes as hex');
+check(ktesios_csrf_valid($csrf) === true, 'matching CSRF token is accepted');
+check(ktesios_csrf_valid('00') === false, 'short CSRF token is rejected');
+check(ktesios_csrf_valid(str_repeat('a', 64)) === false, 'different CSRF token is rejected');
+check(ktesios_csrf_valid('') === false, 'empty CSRF token is rejected');
+ktesios_csrf_rotate();
+check(ktesios_csrf_valid($csrf) === false, 'rotated CSRF token is no longer accepted');
+$fresh = ktesios_csrf_token();
+check($fresh !== $csrf && ktesios_csrf_valid($fresh) === true, 'a new CSRF token is issued after rotate');
 
 if ($failures > 0) {
     fwrite(STDERR, "{$failures} failed\n");

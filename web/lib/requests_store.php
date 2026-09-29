@@ -78,13 +78,18 @@ function ktesios_seed_requests(): void
 function ktesios_save_requests(array $requests): void
 {
     $path = ktesios_requests_path();
-    ktesios_ensure_dir(dirname($path));
+    $dir = dirname($path);
+    ktesios_ensure_dir($dir);
     $json = json_encode(array_values($requests), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($json === false) {
         throw new RuntimeException('Aanvragen konden niet worden gecodeerd.');
     }
-    $tmp = $path . '.tmp';
+    $tmp = tempnam($dir, '.requests-');
+    if ($tmp === false) {
+        throw new RuntimeException('Tijdelijk aanvragenbestand kon niet worden aangemaakt.');
+    }
     if (file_put_contents($tmp, $json . "\n", LOCK_EX) === false) {
+        @unlink($tmp);
         throw new RuntimeException('Tijdelijk aanvragenbestand kon niet worden geschreven.');
     }
     if (!rename($tmp, $path)) {

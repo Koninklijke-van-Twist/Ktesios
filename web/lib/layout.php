@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/html.php';
+require_once __DIR__ . '/csrf.php';
 
 function ktesios_page_open(string $title): void
 {
@@ -205,6 +206,7 @@ function ktesios_render_confirm_form(array $request): void
 {
     $id = (string) ($request['id'] ?? '');
     echo '<form method="post" action="request.php?id=' . h(rawurlencode($id)) . '">';
+    echo '<input type="hidden" name="csrf" value="' . h(ktesios_csrf_token()) . '">';
     echo '<input type="hidden" name="actie" value="goedkeuren">';
     echo '<input type="hidden" name="bevestig" value="ja">';
     echo '<div class="actions">';
