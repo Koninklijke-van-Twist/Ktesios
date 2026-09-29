@@ -25,21 +25,17 @@ try {
         $postError = '';
         $redirect = '';
         if ($request !== null && (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST')) {
-            $confirmed = (string) ($_POST['actie'] ?? '') === 'goedkeuren' && (string) ($_POST['bevestig'] ?? '') === 'ja';
             $postedCsrf = isset($_POST['csrf']) && is_string($_POST['csrf']) ? $_POST['csrf'] : '';
-            if (!$confirmed) {
-                $postError = 'Bevestig de goedkeuring in het venster.';
-            } elseif (!ktesios_csrf_valid($postedCsrf)) {
-                $postError = 'Deze goedkeuring hoort niet bij je sessie. Laad de pagina opnieuw.';
-            } else {
+            $csrfOk = ktesios_csrf_valid($postedCsrf);
+            $outcome = ktesios_apply_request_action($requests, $request, $_POST, $csrfOk);
+            if ($outcome['rotate'] === true) {
                 ktesios_csrf_rotate();
-                $decision = ktesios_approve_request($request, ktesios_actor());
-                if ($decision['ok'] !== true) {
-                    $postError = $decision['error'] !== '' ? $decision['error'] : 'Goedkeuren is niet gelukt.';
-                } else {
-                    ktesios_save_requests(ktesios_replace_request($requests, $decision['request']));
-                    $redirect = 'request.php?id=' . rawurlencode($id) . '&gemeld=1';
-                }
+            }
+            if ($outcome['error'] !== '') {
+                $postError = $outcome['error'];
+            } elseif ($outcome['saved'] === true) {
+                ktesios_save_requests($outcome['requests']);
+                $redirect = 'request.php?id=' . rawurlencode($id) . '&gemeld=1';
             }
         }
         return [
@@ -73,18 +69,25 @@ if (!is_array($request)) {
 
 $step = (string) ($_GET['stap'] ?? '');
 $isOpen = (string) ($request['status'] ?? '') === 'open';
-$confirming = $isOpen && $step === 'bevestigen';
+$mayChange = ktesios_can_approve();
+$confirming = $isOpen && $mayChange && $step === 'bevestigen';
 
 ktesios_page_open($id . ' — Ktesios');
 echo '<p class="hint"><a href="index.php">← Aanvragen</a></p>';
 echo '<h1>' . h($id) . '</h1>';
 echo '<p><span class="pill pill-' . h(ktesios_status_pill($request)) . '">' . h(ktesios_status_label($request)) . '</span></p>';
 
+if ((string) ($_GET['ingediend'] ?? '') === '1') {
+    echo '<p class="saved">Aanvraag ingediend.</p>';
+}
 if ((string) ($_GET['gemeld'] ?? '') === '1') {
     echo '<p class="saved">Opgeslagen.</p>';
 }
 if ($postError !== '') {
     echo '<p class="field-error">' . h($postError) . '</p>';
+}
+if (!$mayChange) {
+    echo '<p class="hint">' . h(ktesios_requester_hint()) . '</p>';
 }
 
 $note = trim((string) ($request['bcNote'] ?? ''));
@@ -100,10 +103,18 @@ if ($confirming) {
     echo '</section>';
 }
 
-ktesios_render_customer_fields($request);
+if ($isOpen && $mayChange && !$confirming) {
+    echo '<section class="panel">';
+    echo '<h2>Gegevens wijzigen</h2>';
+    ktesios_render_request_form($request, 'request.php?id=' . rawurlencode($id), 'wijzigen', 'Wijzigingen opslaan');
+    echo '</section>';
+} else {
+    ktesios_render_customer_fields($request);
+}
 
 $meta = [
     'Aangemaakt' => (string) ($request['createdAt'] ?? ''),
+    'Ingediend door' => (string) ($request['createdBy'] ?? ''),
     'Goedgekeurd' => trim((string) ($request['approvedAt'] ?? '') . ' ' . (string) ($request['approvedBy'] ?? '')),
     'Afgerond' => (string) ($request['archivedAt'] ?? ''),
     'Reden archief' => (string) ($request['archiveReason'] ?? ''),
@@ -155,7 +166,7 @@ if ((string) ($request['bcSync'] ?? '') === 'stub-archived' && $payload !== []) 
     );
 }
 
-if ($isOpen && !$confirming) {
+if ($isOpen && $mayChange && !$confirming) {
     echo '<div class="actions">';
     echo '<button class="btn btn-primary" type="button" id="open-approve">Goedkeuren</button>';
     echo '</div>';

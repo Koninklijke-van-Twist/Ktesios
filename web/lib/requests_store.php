@@ -30,6 +30,144 @@ function ktesios_valid_request_id(string $id): bool
 }
 
 /**
+ * @return list<string>
+ */
+function ktesios_customer_field_keys(): array
+{
+    return ['customerNo', 'name', 'address', 'postCode', 'city', 'country', 'phone', 'email', 'vat', 'kvk', 'contact'];
+}
+
+function ktesios_clip(string $value, int $max, bool $singleLine): string
+{
+    $value = str_replace("\0", '', $value);
+    if ($singleLine) {
+        $value = str_replace(["\r\n", "\r", "\n"], ' ', $value);
+        $collapsed = preg_replace('/[ \t]+/u', ' ', $value);
+        $value = trim($collapsed ?? '');
+    } else {
+        $value = trim(str_replace(["\r\n", "\r"], "\n", $value));
+    }
+    if (function_exists('mb_substr')) {
+        return mb_substr($value, 0, $max, 'UTF-8');
+    }
+    if (strlen($value) <= $max) {
+        return $value;
+    }
+    return substr($value, 0, $max);
+}
+
+/**
+ * @param array<string, mixed> $input
+ * @param array<string, mixed> $existing
+ * @return array<string, string>
+ */
+function ktesios_customer_from_input(array $input, array $existing = []): array
+{
+    $posted = isset($input['customer']) && is_array($input['customer']) ? $input['customer'] : [];
+    $customer = [];
+    foreach (ktesios_customer_field_keys() as $key) {
+        if (!array_key_exists($key, $posted)) {
+            $customer[$key] = ktesios_clip((string) ($existing[$key] ?? ''), 200, true);
+            continue;
+        }
+        $raw = $posted[$key];
+        $customer[$key] = ktesios_clip(is_string($raw) ? $raw : '', 200, true);
+    }
+    if ($customer['country'] === '') {
+        $customer['country'] = 'NL';
+    }
+    return $customer;
+}
+
+/**
+ * @param list<array<string, mixed>> $requests
+ */
+function ktesios_next_request_id(array $requests): string
+{
+    $year = gmdate('Y');
+    $max = 0;
+    $pattern = '/\AKA-' . $year . '-(\d{3})\z/';
+    foreach ($requests as $request) {
+        $id = (string) ($request['id'] ?? '');
+        if (preg_match($pattern, $id, $match) === 1) {
+            $number = (int) $match[1];
+            if ($number > $max) {
+                $max = $number;
+            }
+        }
+    }
+    $next = $max + 1;
+    if ($next > 999) {
+        return '';
+    }
+    return sprintf('KA-%s-%03d', $year, $next);
+}
+
+/**
+ * Nieuwe aanvraag. Geen goedkeurder nodig.
+ *
+ * @param list<array<string, mixed>> $requests
+ * @param array<string, mixed> $input
+ * @return array{ok: bool, error: string, request: array<string, mixed>, requests: list<array<string, mixed>>}
+ */
+function ktesios_create_open_request(array $requests, array $input, string $actor): array
+{
+    $customer = ktesios_customer_from_input($input);
+    if ($customer['name'] === '') {
+        return ['ok' => false, 'error' => 'Vul een bedrijfsnaam in.', 'request' => [], 'requests' => $requests];
+    }
+    $id = ktesios_next_request_id($requests);
+    if ($id === '') {
+        return ['ok' => false, 'error' => 'Er kan geen nieuw aanvraagnummer worden gemaakt.', 'request' => [], 'requests' => $requests];
+    }
+    $note = '';
+    if (isset($input['note']) && is_string($input['note'])) {
+        $note = ktesios_clip($input['note'], 1000, false);
+    }
+    $request = [
+        'id' => $id,
+        'status' => 'open',
+        'createdAt' => gmdate('c'),
+        'createdBy' => $actor,
+        'approvedAt' => '',
+        'approvedBy' => '',
+        'archivedAt' => '',
+        'archiveReason' => '',
+        'bcSync' => '',
+        'bcNote' => '',
+        'bcCustomerNo' => '',
+        'bcDiff' => [],
+        'note' => $note,
+        'customer' => $customer,
+    ];
+    $requests[] = $request;
+    return ['ok' => true, 'error' => '', 'request' => $request, 'requests' => $requests];
+}
+
+/**
+ * @param array<string, mixed> $request
+ * @param array<string, mixed> $input
+ * @return array{ok: bool, error: string, request: array<string, mixed>}
+ */
+function ktesios_edit_open_request(array $request, array $input): array
+{
+    if ((string) ($request['status'] ?? '') !== 'open') {
+        return ['ok' => false, 'error' => 'Alleen een open aanvraag kan worden gewijzigd.', 'request' => $request];
+    }
+    $existingCustomer = $request['customer'] ?? null;
+    $existing = is_array($existingCustomer) ? $existingCustomer : [];
+    $customer = ktesios_customer_from_input($input, $existing);
+    if ($customer['name'] === '') {
+        return ['ok' => false, 'error' => 'Vul een bedrijfsnaam in.', 'request' => $request];
+    }
+    $request['customer'] = $customer;
+    if (isset($input['note']) && is_string($input['note'])) {
+        $request['note'] = ktesios_clip($input['note'], 1000, false);
+    }
+    return ['ok' => true, 'error' => '', 'request' => $request];
+}
+
+/**
  * @return list<array<string, mixed>>
  */
 function ktesios_load_requests(): array

@@ -646,13 +646,113 @@ function ktesios_approve_request(array $request, string $actor): array
     ];
 }
 
+function ktesios_current_email(): string
+{
+    return strtolower(trim((string) ($_SESSION['user']['email'] ?? '')));
+}
+
 function ktesios_actor(): string
 {
-    $email = strtolower(trim((string) ($_SESSION['user']['email'] ?? '')));
+    $email = ktesios_current_email();
     if ($email !== '') {
         return $email;
     }
     return 'lokaal';
+}
+
+/**
+ * Fail-closed: ontbreekt $approvers, is die geen lijst, of staat het adres er
+ * niet als string in, dan mag deze gebruiker niet goedkeuren of wijzigen.
+ */
+function ktesios_can_approve(): bool
+{
+    $email = ktesios_current_email();
+    if ($email === '' || !isset($GLOBALS['approvers']) || !is_array($GLOBALS['approvers']) || $GLOBALS['approvers'] === []) {
+        return false;
+    }
+    foreach ($GLOBALS['approvers'] as $entry) {
+        if (!is_string($entry)) {
+            continue;
+        }
+        if (strtolower(trim($entry)) === $email) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function ktesios_approver_denied_message(): string
+{
+    return 'Alleen een aangewezen goedkeurder mag een aanvraag goedkeuren of wijzigen.';
+}
+
+function ktesios_requester_hint(): string
+{
+    return 'Je kunt een nieuwe aanvraag indienen. Goedkeuren en wijzigen mag alleen een aangewezen goedkeurder.';
+}
+
+/**
+ * POST op de detailpagina. Goedkeuren en wijzigen eisen een goedkeurder én een
+ * geldig CSRF-token. De controle gebeurt hier, niet alleen in de HTML.
+ *
+ * @param list<array<string, mixed>> $requests
+ * @param array<string, mixed> $request
+ * @param array<string, mixed> $post
+ * @return array{saved: bool, rotate: bool, error: string, requests: list<array<string, mixed>>}
+ */
+function ktesios_apply_request_action(array $requests, array $request, array $post, bool $csrfOk): array
+{
+    $none = [
+        'saved' => false,
+        'rotate' => false,
+        'error' => '',
+        'requests' => $requests,
+    ];
+    $actie = (string) ($post['actie'] ?? '');
+    if ($actie !== 'goedkeuren' && $actie !== 'wijzigen') {
+        $none['error'] = 'Onbekende actie.';
+        return $none;
+    }
+    if (!ktesios_can_approve()) {
+        $none['error'] = ktesios_approver_denied_message();
+        return $none;
+    }
+    if (!$csrfOk) {
+        $none['error'] = 'Deze actie hoort niet bij je sessie. Laad de pagina opnieuw.';
+        return $none;
+    }
+    if ($actie === 'goedkeuren') {
+        if ((string) ($post['bevestig'] ?? '') !== 'ja') {
+            $none['error'] = 'Bevestig de goedkeuring in het venster.';
+            $none['rotate'] = true;
+            return $none;
+        }
+        $decision = ktesios_approve_request($request, ktesios_actor());
+        if ($decision['ok'] !== true) {
+            $none['error'] = $decision['error'] !== '' ? $decision['error'] : 'Goedkeuren is niet gelukt.';
+            $none['rotate'] = true;
+            return $none;
+        }
+        return [
+            'saved' => true,
+            'rotate' => true,
+            'error' => '',
+            'requests' => ktesios_replace_request($requests, $decision['request']),
+        ];
+    }
+
+    $edited = ktesios_edit_open_request($request, $post);
+    if ($edited['ok'] !== true) {
+        $none['error'] = $edited['error'] !== '' ? $edited['error'] : 'Wijzigen is niet gelukt.';
+        $none['rotate'] = true;
+        return $none;
+    }
+    return [
+        'saved' => true,
+        'rotate' => true,
+        'error' => '',
+        'requests' => ktesios_replace_request($requests, $edited['request']),
+    ];
 }
 
 /**

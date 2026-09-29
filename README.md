@@ -61,6 +61,12 @@ Die functie is een **stub**. Ze logt een dry-run naar `web/data/bc-write.log` en
 `web/logincheck.php` volgt Vulcanus: buiten localhost `require __DIR__ . '/../login/lib.php'` (gedeelde Entra-sessie op `/login/`) en daarna `$allowedUsers`.
 `127.0.0.1` en `::1` slaan de login over, zodat de lokale server werkt.
 
+## Goedkeurders
+
+`$approvers` in `web/auth.php` is een lijst e-mailadressen. Alleen die accounts mogen een aanvraag goedkeuren of de gegevens wijzigen. Iedereen die mag inloggen mag een nieuwe aanvraag indienen; goedkeurders ook.
+
+Ontbreekt `$approvers` of is de lijst leeg, dan mag niemand goedkeuren of wijzigen. De knoppen blijven weg en een POST wordt op de server geweigerd.
+
 ## Productie
 
 Tim levert op de server (niet in git):

@@ -38,7 +38,8 @@ function reset_state(): void
         $GLOBALS['ktesios_requests_path'],
         $GLOBALS['ktesios_requests_seed_path'],
         $GLOBALS['ktesios_bc_write_log_path'],
-        $GLOBALS['ktesios_bc_customers_path']
+        $GLOBALS['ktesios_bc_customers_path'],
+        $GLOBALS['approvers']
     );
     ktesios_mimir_set_transport(null);
 }
@@ -93,6 +94,7 @@ check(ktesios_can_write_to_bc() === true, 'only boolean true opens the write pat
 
 $template = (string) file_get_contents(__DIR__ . '/../web/auth_TEMPLATE.php');
 check(preg_match('/\$canWriteToBC\s*=\s*false\s*;/', $template) === 1, 'template defaults the flag to false');
+check(preg_match('/\$approvers\s*=\s*\[\s*\]\s*;/', $template) === 1, 'template fail-closes approvers to an empty list');
 check(strpos($template, 'mimir_…') !== false || strpos($template, 'mimir_...') !== false, 'template has no live Mímir key');
 check(strpos($template, "'pass' => 'PASSWORD'") !== false, 'BC password in the template is only the placeholder');
 check(strpos($template, 'web/auth.php') !== false, 'template tells you to copy it to auth.php');
@@ -452,8 +454,23 @@ check(strpos($requestPage, 'approve-modal') !== false, 'detail page has a confir
 check(strpos($requestPage, 'stap=bevestigen') !== false, 'detail page has a no-js confirmation step');
 check(strpos($requestPage, 'bevestig') !== false, 'approval requires the confirmation field');
 $csrfPos = strpos($requestPage, 'ktesios_csrf_valid');
-$approvePos = strpos($requestPage, 'ktesios_approve_request');
-check($csrfPos !== false && $approvePos !== false && $csrfPos < $approvePos, 'CSRF is checked before approve');
+$applyPos = strpos($requestPage, 'ktesios_apply_request_action');
+check($csrfPos !== false && $applyPos !== false && $csrfPos < $applyPos, 'CSRF is checked before approve or edit');
+check(strpos($requestPage, 'ktesios_can_approve') !== false, 'detail hides approve and edit unless the user may change requests');
+check(strpos($requestPage, 'ktesios_requester_hint') !== false, 'non-approvers see why approve and edit are hidden');
+$actionFn = strstr($bcSource, 'function ktesios_apply_request_action');
+check(is_string($actionFn), 'approve and edit share one server-side handler');
+$permPos = is_string($actionFn) ? strpos($actionFn, 'ktesios_can_approve') : false;
+$tokenPos = is_string($actionFn) ? strpos($actionFn, '!$csrfOk') : false;
+$approveCall = is_string($actionFn) ? strpos($actionFn, 'ktesios_approve_request') : false;
+$editCall = is_string($actionFn) ? strpos($actionFn, 'ktesios_edit_open_request') : false;
+check($permPos !== false && $tokenPos !== false && $approveCall !== false && $permPos < $tokenPos && $tokenPos < $approveCall, 'approver and CSRF checks run before approve');
+check($editCall !== false && $tokenPos !== false && $tokenPos < $editCall, 'approver and CSRF checks run before edit');
+$newPage = (string) file_get_contents(__DIR__ . '/../web/new.php');
+$newCsrf = strpos($newPage, 'ktesios_csrf_valid');
+$newCreate = strpos($newPage, 'ktesios_create_open_request');
+check($newCsrf !== false && $newCreate !== false && $newCsrf < $newCreate, 'new request checks CSRF before it is stored');
+check(strpos($newPage, 'ktesios_can_approve') === false, 'submitting a request does not require an approver');
 $layout = (string) file_get_contents(__DIR__ . '/../web/lib/layout.php');
 check(strpos($layout, 'name="csrf"') !== false, 'confirm form posts the CSRF token');
 $storeSource = (string) file_get_contents(__DIR__ . '/../web/lib/requests_store.php');
@@ -463,6 +480,7 @@ check(strpos($storeSource, 'tempnam(') !== false, 'save uses a unique tempnam pe
 $phpFiles = [
     'web/index.php',
     'web/request.php',
+    'web/new.php',
     'web/archive.php',
     'web/logincheck.php',
     'web/auth_TEMPLATE.php',
@@ -512,6 +530,84 @@ check(is_string($scopeOut) && strpos($scopeOut, 'mimir-yes') !== false, 'tempora
 if (!is_string($scopeOut) || strpos($scopeOut, 'write-yes') === false) {
     fwrite(STDERR, "scope runner output:\n" . (string) $scopeOut . "\n");
 }
+
+unset($GLOBALS['approvers'], $_SESSION['user']);
+check(ktesios_can_approve() === false, 'missing approvers list blocks approve and edit');
+$GLOBALS['approvers'] = [];
+$_SESSION['user'] = ['email' => 'goedkeurder@kvt.nl'];
+check(ktesios_can_approve() === false, 'empty approvers list blocks approve and edit');
+$GLOBALS['approvers'] = 'goedkeurder@kvt.nl';
+check(ktesios_can_approve() === false, 'a string approvers value is not a list');
+$GLOBALS['approvers'] = ['goedkeurder@kvt.nl' => true];
+check(ktesios_can_approve() === false, 'approver map keys are not treated as emails');
+$GLOBALS['approvers'] = [15, '  Goedkeurder@kvt.nl  '];
+check(ktesios_can_approve() === true, 'approver match ignores case, space and non-strings');
+unset($_SESSION['user']);
+check(ktesios_can_approve() === false, 'no email cannot approve even when the list is filled');
+
+$openForGate = sample_request('KA-2026-010', 'open');
+$deniedEdit = ktesios_apply_request_action(
+    [$openForGate],
+    $openForGate,
+    ['actie' => 'wijzigen', 'customer' => ['name' => 'Gewijzigd BV']],
+    true
+);
+check($deniedEdit['saved'] === false, 'non-approver edit is refused on the server');
+check(($deniedEdit['requests'][0]['customer']['name'] ?? '') === 'Smit & Zonen B.V.', 'refused edit does not change the name');
+check(strpos($deniedEdit['error'], 'goedkeurder') !== false, 'refused edit explains who may change a request');
+$deniedApprove = ktesios_apply_request_action(
+    [$openForGate],
+    $openForGate,
+    ['actie' => 'goedkeuren', 'bevestig' => 'ja'],
+    true
+);
+check($deniedApprove['saved'] === false && ($deniedApprove['requests'][0]['status'] ?? '') === 'open', 'non-approver approve is refused on the server');
+
+$_SESSION['user'] = ['email' => 'goedkeurder@kvt.nl'];
+$badToken = ktesios_apply_request_action(
+    [$openForGate],
+    $openForGate,
+    ['actie' => 'goedkeuren', 'bevestig' => 'ja'],
+    false
+);
+check($badToken['saved'] === false, 'approver still needs a valid CSRF token');
+$edited = ktesios_apply_request_action(
+    [$openForGate],
+    $openForGate,
+    ['actie' => 'wijzigen', 'customer' => ['name' => 'Andere BV'], 'note' => 'na controle'],
+    true
+);
+check($edited['saved'] === true, 'approver can edit an open request');
+check(($edited['requests'][0]['customer']['name'] ?? '') === 'Andere BV', 'edit stores the new company name');
+check(($edited['requests'][0]['customer']['city'] ?? '') === 'Utrecht', 'omitted fields stay as they were');
+check(($edited['requests'][0]['status'] ?? '') === 'open', 'edit does not approve the request');
+$approvedByRole = ktesios_apply_request_action(
+    [$openForGate],
+    $openForGate,
+    ['actie' => 'goedkeuren', 'bevestig' => 'ja'],
+    true
+);
+check($approvedByRole['saved'] === true && ($approvedByRole['requests'][0]['status'] ?? '') === 'approved', 'approver can approve');
+check(($approvedByRole['requests'][0]['approvedBy'] ?? '') === 'goedkeurder@kvt.nl', 'approval stores the approver email');
+$closed = sample_request('KA-2026-010', 'approved');
+$closedEdit = ktesios_apply_request_action([$closed], $closed, ['actie' => 'wijzigen', 'customer' => ['name' => 'X']], true);
+check($closedEdit['saved'] === false, 'approver cannot edit a request that is not open');
+
+$year = gmdate('Y');
+$submitted = ktesios_create_open_request(
+    [sample_request('KA-' . $year . '-010', 'open')],
+    ['customer' => ['name' => 'Nieuw BV', 'city' => 'Delft'], 'note' => 'offerte'],
+    'indiener@kvt.nl'
+);
+check($submitted['ok'] === true, 'a non-approver path can still build a new request');
+check(($submitted['request']['id'] ?? '') === 'KA-' . $year . '-011', 'new request ids increment in the current year');
+check(($submitted['request']['status'] ?? '') === 'open', 'a submitted request starts open');
+check(($submitted['request']['createdBy'] ?? '') === 'indiener@kvt.nl', 'submitter is stored');
+$asApprover = ktesios_create_open_request([], ['customer' => ['name' => 'Ook BV']], 'goedkeurder@kvt.nl');
+check($asApprover['ok'] === true && ($asApprover['request']['createdBy'] ?? '') === 'goedkeurder@kvt.nl', 'an approver can also submit a request');
+$nameless = ktesios_create_open_request([], ['customer' => ['city' => 'Delft']], 'indiener@kvt.nl');
+check($nameless['ok'] === false, 'a request without a company name is refused');
+unset($GLOBALS['approvers'], $_SESSION['user']);
 
 ini_set('session.use_cookies', '0');
 ini_set('session.use_only_cookies', '1');

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 /**
  * Include dit bestand op topniveau van de pagina, niet vanuit een functie.
- * auth.php zet $canWriteToBC, $allowedUsers en $mimirApi. Die moeten globaal
+ * auth.php zet $canWriteToBC, $allowedUsers, $approvers en $mimirApi. Die moeten globaal
  * blijven, net als bij Vulcanus (require op paginaniveau).
  */
 

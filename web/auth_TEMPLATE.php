@@ -14,6 +14,12 @@
  *   weglaten of []  → elke geldige Entra-login heeft toegang
  *   lijst met e-mails → alleen die accounts
  *
+ * $approvers
+ *   Lijst met e-mailadressen (strings). Alleen die accounts mogen een aanvraag
+ *   goedkeuren of de gegevens wijzigen. Iedereen die mag inloggen mag wel een
+ *   nieuwe aanvraag indienen; goedkeurders ook.
+ *   Weglaten of [] → niemand mag goedkeuren of wijzigen (fail-closed).
+ *
  * $mimirApi
  *   gezet: het overzicht controleert goedgekeurde aanvragen read-only via Mímir.
  *   leeg: sample-fixtures in web/fixtures/bc_customers.json.
@@ -29,6 +35,12 @@ $canWriteToBC = false;
 // $allowedUsers = [
 //     "user@domain.nl",
 // ];
+
+// Alleen deze adressen keuren goed of wijzigen. Leeg = niemand.
+// $approvers = [
+//     'goedkeurder@kvt.nl',
+// ];
+$approvers = [];
 
 // $mimirApi     = 'mimir_…';
 // $mimirBase    = 'https://sleutels.kvt.nl/mimir/api';

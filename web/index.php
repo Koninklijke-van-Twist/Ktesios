@@ -36,6 +36,10 @@ foreach ($reconciliation['requests'] as $request) {
 ktesios_page_open('Ktesios — aanvragen');
 echo '<h1>Klantaanvragen</h1>';
 echo '<p class="lead">Controle bij laden: ' . h(ktesios_bc_read_source_label()) . '. Alleen goedgekeurde aanvragen die nog niet afgerond zijn.</p>';
+echo '<p class="actions"><a class="btn btn-primary" href="new.php">Nieuwe aanvraag</a></p>';
+if (!ktesios_can_approve()) {
+    echo '<p class="hint">' . h(ktesios_requester_hint()) . '</p>';
+}
 
 if ($reconciliation['archivedIds'] !== []) {
     echo '<section class="panel panel-ok">';
