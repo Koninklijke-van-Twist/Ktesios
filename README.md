@@ -101,3 +101,7 @@ De test raakt geen netwerk en leest geen `web/auth.php`.
 - `web/lib/requests_store.php` — JSON in `web/data/`
 - `web/lib/bc_customer.php` — leescheck, diff, schrijfgate, stub
 - `web/lib/mimir_client.php` — read-only POST naar Mímir `query.php`
+
+## Gebruikersbeheer
+
+Vaste admins (`opesket@kvt.nl`, `tfalken@kvt.nl`, `milanscheenloop@kvt.nl`) beheren de allowlist via `admin_users.php`. Die lijst staat in `web/data/access.sqlite`. Zolang die tabel leeg is, geldt `$allowedUsers` uit `auth.php`.
