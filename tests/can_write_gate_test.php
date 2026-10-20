@@ -103,6 +103,8 @@ $gitignore = (string) file_get_contents(__DIR__ . '/../.gitignore');
 check(strpos($gitignore, 'web/auth.php') !== false, 'gitignore ignores web/auth.php');
 check(strpos($gitignore, 'web/data/*') !== false, 'gitignore ignores local data files');
 check(strpos($gitignore, '!web/data/.gitkeep') !== false, 'gitignore keeps the data directory marker');
+check(preg_match('/^web\/analytics\/analytics\.sqlite$/m', $gitignore) === 1, 'gitignore ignores the analytics sqlite file');
+check(preg_match('/^web\/analytics\/analytics\.sqlite-\*$/m', $gitignore) === 1, 'gitignore ignores analytics sqlite sidecars');
 
 $workflow = (string) file_get_contents(__DIR__ . '/../.github/workflows/deploy-ftp.yml');
 check(strpos($workflow, 'scripts/guard-ftp-remote-dir.sh') !== false, 'deploy workflow runs the remote-dir guard');
@@ -111,6 +113,8 @@ check(strpos($workflow, '--exclude-glob auth.php') !== false, 'deploy excludes a
 check(strpos($workflow, '--exclude-glob .htaccess') !== false, 'deploy excludes htaccess');
 check(strpos($workflow, '--exclude-glob data/**') !== false, 'deploy excludes data');
 check(strpos($workflow, '--exclude-glob cache/**') !== false, 'deploy excludes cache');
+check(preg_match('/^[[:space:]]*--exclude-glob analytics\/\*\.sqlite[[:space:]]*\\\\$/m', $workflow) === 1, 'deploy excludes analytics sqlite');
+check(preg_match('/^[[:space:]]*--exclude-glob analytics\/\*\.sqlite-\*[[:space:]]*\\\\$/m', $workflow) === 1, 'deploy excludes analytics sqlite sidecars');
 check(strpos($workflow, 'mirror -R --delete') !== false, 'deploy mirrors web with delete');
 check(strpos($workflow, "php-version: \"8.0\"") !== false, 'CI runs the gate test on PHP 8.0');
 check(strpos($workflow, 'actions/checkout@v4') === false, 'checkout is not a floating major tag');
@@ -129,6 +133,21 @@ check(strpos($bcSource, "'entity' => 'Customer'") === false && strpos($bcSource,
 $login = (string) file_get_contents(__DIR__ . '/../web/logincheck.php');
 check(strpos($login, "/../login/lib.php") !== false, 'logincheck uses the shared Login app');
 check(strpos($login, 'is_trusted_requester') !== false, 'localhost skips the shared login');
+$denyAt = strpos($login, "/../login/403.php");
+$analyticsAt = strpos($login, "'/analytics/analytics.php?'");
+check($denyAt !== false && $analyticsAt !== false && $denyAt < $analyticsAt, 'analytics call sits after the access check');
+check(preg_match('/require(?:_once)?\s*[^;]*analytics\.php/', $login) !== 1, 'logincheck does not include analytics.php');
+check(strpos($login, "'user_email' => \$analyticsEmail") !== false, 'analytics call sends the email');
+check(strpos($login, "'api_key' => \$analyticsApiKey") !== false, 'analytics call sends the api key');
+check(strpos($login, "'oid' => \$analyticsOid") !== false, 'analytics call sends the oid');
+check(strpos($login, 'CURLOPT_TIMEOUT => 1') !== false, 'analytics call uses a short timeout');
+$analyticsSource = (string) file_get_contents(__DIR__ . '/../web/analytics/analytics.php');
+check(strpos($analyticsSource, 'kvt_protect_dirs.php') === false, 'analytics.php is the Elpis variant without kvt_protect_dirs');
+check(strpos($analyticsSource, 'visited_at INTEGER NOT NULL') !== false, 'analytics.php keeps the visits schema');
+check(strpos($analyticsSource, 'user_email TEXT NOT NULL') !== false, 'analytics.php stores the email column');
+$rules = (string) file_get_contents(__DIR__ . '/../web/analytics/rules.md');
+check(strpos($rules, 'visited_at INTEGER NOT NULL') !== false, 'rules.md keeps the visits schema');
+check(strpos($rules, 'user_email TEXT NOT NULL') !== false, 'rules.md keeps the email column');
 
 reset_state();
 $blocked = ktesios_bc_write_customer(['fields' => ['Name' => 'Niemand']], 'KA-2026-010');
@@ -144,6 +163,23 @@ if (!is_dir($tmp) && !mkdir($tmp, 0775, true) && !is_dir($tmp)) {
 $GLOBALS['ktesios_bc_write_log_path'] = $tmp . '/bc-write.log';
 $GLOBALS['ktesios_requests_path'] = $tmp . '/requests.json';
 $GLOBALS['ktesios_bc_customers_path'] = __DIR__ . '/../web/fixtures/bc_customers.json';
+
+$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+require_once __DIR__ . '/../web/logincheck.php';
+$analyticsGuard = $tmp . '/analytics-guard';
+check(mkdir($analyticsGuard, 0775, true) || is_dir($analyticsGuard), 'analytics guard directory can be created');
+ktesios_ensure_analytics_htaccess($analyticsGuard);
+$guardHtaccess = (string) file_get_contents($analyticsGuard . '/.htaccess');
+check(strpos($guardHtaccess, 'Require all denied') !== false, 'analytics htaccess denies the directory');
+check(strpos($guardHtaccess, '<Files "analytics.php">') !== false, 'analytics htaccess names the endpoint');
+$filesAt = strpos($guardHtaccess, '<Files "analytics.php">');
+$grantedAt = strpos($guardHtaccess, 'Require all granted');
+check($filesAt !== false && $grantedAt !== false && $filesAt < $grantedAt, 'analytics.php is the exception that stays reachable');
+file_put_contents($analyticsGuard . '/.htaccess', "keep\n");
+ktesios_ensure_analytics_htaccess($analyticsGuard);
+check(file_get_contents($analyticsGuard . '/.htaccess') === "keep\n", 'an existing analytics htaccess is left untouched');
+ktesios_ensure_analytics_htaccess($tmp . '/missing-analytics');
+check(is_file($tmp . '/missing-analytics/.htaccess') === false, 'a missing analytics directory is not created for the htaccess');
 
 $open = sample_request('KA-2026-010', 'open');
 $dry = ktesios_approve_request($open, 'tester@kvt.example');

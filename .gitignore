@@ -6,6 +6,10 @@ web/cache/
 web/data/*
 !web/data/.gitkeep
 
+# Bezoeklog. Wordt op de server aangemaakt; deploy laat de sqlite staan.
+web/analytics/analytics.sqlite
+web/analytics/analytics.sqlite-*
+
 # OS-rommel
 .DS_Store
 Thumbs.db

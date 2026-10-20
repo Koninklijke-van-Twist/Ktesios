@@ -79,6 +79,8 @@ jobs:
             --exclude-glob cache/** \
             --exclude-glob data/ \
             --exclude-glob data/** \
+            --exclude-glob analytics/*.sqlite \
+            --exclude-glob analytics/*.sqlite-* \
             ./web .
 
           bye
